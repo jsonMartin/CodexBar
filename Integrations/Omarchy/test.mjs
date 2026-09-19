@@ -118,10 +118,10 @@ test('a provider without a weekly window shows the session lane alone', () => {
     assert.ok(!label.includes('·'));
     assert.ok(!label.includes('—'));
 });
-test('an unavailable weekly pace stays unavailable instead of reading as on pace', () => {
-    assert.equal(model.barLabel(lanes({secondary: weekly}, null), 'remaining'), '7D 61% · —');
+test('an unavailable weekly pace is omitted entirely rather than shown as a dash', () => {
+    assert.equal(model.barLabel(lanes({secondary: weekly}, null), 'remaining'), '7D 61%');
     for (const value of [{}, {deltaPercent: null}, {deltaPercent: 'nope'}, {deltaPercent: Infinity}])
-        assert.equal(model.barLabel(lanes({secondary: weekly}, {secondary: value}), 'remaining'), '7D 61% · —');
+        assert.equal(model.barLabel(lanes({secondary: weekly}, {secondary: value}), 'remaining'), '7D 61%');
 });
 test('missing quota values never produce empty segments or stray separators', () => {
     assert.equal(model.barLabel(lanes({primary: {usedPercent: null, windowMinutes: 300}, secondary: weekly},
@@ -245,4 +245,14 @@ test('a scoped cap on a provider with no weekly lane emits no pace slot', () => 
     const label = model.barLabel(rows, 'remaining');
     assert.equal(label, 'Fable 7%');
     assert.ok(!label.includes('—'));
+});
+test('backup or reserve scoped caps get no bar lane, while real scoped caps keep theirs', () => {
+    const reserve = lanes({secondary: weekly,
+        extraRateWindows: [{id: 'codex-weekly-scoped-gpt-reserve', title: 'gpt-reserve only',
+            window: {usedPercent: 3, windowMinutes: 10080}}]}, {secondary: {deltaPercent: 3}});
+    assert.equal(model.barLabel(reserve, 'remaining'), '7D 61% · +3%');
+    const fable = lanes({secondary: weekly,
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 93, windowMinutes: 10080}}]}, null);
+    assert.equal(model.barLabel(fable, 'remaining'), '7D 61% · Fable 7%');
 });

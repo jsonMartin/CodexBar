@@ -42,8 +42,11 @@ Panel {
         anchors.fill: parent
         bar: root.bar
         // One segment per displayed provider; older backends publish no barEntries and get the plain label.
-        readonly property var segments: root.available && Array.isArray(root.snapshot.barEntries) ? root.snapshot.barEntries : []
-        readonly property bool icons: segments.length > 0
+        // Bindings here must tolerate snapshot === {} and mid-reload states: a binding that
+        // throws is discarded by the engine and never re-evaluated.
+        readonly property var segments: root.available && root.snapshot && Array.isArray(root.snapshot.barEntries)
+            ? root.snapshot.barEntries : []
+        readonly property bool icons: Array.isArray(segments) && segments.length > 0
         // The backend formats the lanes and the weekly pace; the bar only prefixes stale data.
         text: !root.available ? "CodexBar —" : (root.snapshot.stale ? "! " : "") +
             (root.snapshot.barLabel || root.snapshot.summary || "CodexBar —")
@@ -123,9 +126,14 @@ Panel {
             }
             Text {
                 // Providers beyond the shown two, matching barLabel's suffix.
-                visible: root.available && Array.isArray(root.snapshot.entries) &&
-                    root.snapshot.entries.length > button.segments.length
-                text: "+" + (root.snapshot.entries.length - button.segments.length)
+                readonly property int extra: {
+                    var total = root.available && root.snapshot && Array.isArray(root.snapshot.entries)
+                        ? root.snapshot.entries.length : 0
+                    var shown = Array.isArray(button.segments) ? button.segments.length : 0
+                    return total - shown
+                }
+                visible: extra > 0
+                text: "+" + extra
                 color: button.foreground
                 font.family: button.fontFamily; font.pixelSize: button.fontSize
                 anchors.verticalCenter: parent.verticalCenter

@@ -185,14 +185,18 @@ function laneSegments(entry, mode) {
     // A scoped cap is named by the provider, not by its cadence, because it usually
     // shares one with the general lane it sits beside.
     windows.forEach(function(item) {
+        // Backup/reserve pools (codex's gpt-reserve) are not spendable quota and get no
+        // bar lane; a provider's real scoped cap (claude's Fable) stays.
+        if (item.scoped && /reserve|backup/i.test(item.key + " " + item.label)) return;
         // The popup keeps the provider's full title; the bar drops the qualifier it
         // appends to distinguish a scoped cap from the general lane next to it.
         if (item.scoped) segments.push(item.label.replace(/\s+only$/i, "") + " " +
             quotaValue(item.remaining, mode) + "%");
     });
     // Pace belongs to the weekly window, not to whichever lane is most constrained,
-    // and it stays last so the quota lanes read together.
-    if (weekly) segments.push(paceDeltaText(weekly.paceDelta));
+    // and it stays last so the quota lanes read together. An unavailable pace gets no
+    // segment at all: a dash in the bar reads like data rather than like absence.
+    if (weekly && number(weekly.paceDelta) !== null) segments.push(paceDeltaText(weekly.paceDelta));
     if (segments.length || !windows.length) return segments;
     // A provider reporting neither cadence keeps its first window rather than going blank.
     return [(laneLabel(windows[0].minutes) || windows[0].label) + " " +
