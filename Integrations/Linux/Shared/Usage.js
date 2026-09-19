@@ -20,8 +20,10 @@ function rows(text, showIdentity) {
             var minutes = window.windowMinutes;
             var label = minutes >= 1440 ? (minutes / 1440) + " day" :
                 minutes > 0 ? (minutes / 60) + " hour" : ["Session", "Weekly", "Additional"][index];
-            windows.push({key: key, label: label, remaining: left, resetsAt: window.resetsAt || "",
-                pace: entry.pace && entry.pace[key] ? String(entry.pace[key].summary || "") : ""});
+            var pace = entry.pace && entry.pace[key] ? entry.pace[key] : null;
+            windows.push({key: key, label: label, minutes: number(minutes), remaining: left,
+                resetsAt: window.resetsAt || "", pace: pace ? String(pace.summary || "") : "",
+                paceDelta: pace ? number(pace.deltaPercent) : null});
         });
         return {
             provider: entry.provider,
@@ -112,10 +114,66 @@ function costs(text, today) {
     });
 }
 
+function providerTag(provider) {
+    return provider === "codex" ? "CX" : provider === "claude" ? "CL" : provider;
+}
+
 function summary(entries, mode) {
     var label = entries.slice(0, 2).map(function(entry) {
-        var label = entry.provider === "codex" ? "CX" : entry.provider === "claude" ? "CL" : entry.provider;
-        return label + " " + (entry.windows.length ? quotaValue(entry.windows[0].remaining, mode) + "%" : "—");
+        return providerTag(entry.provider) + " " +
+            (entry.windows.length ? quotaValue(entry.windows[0].remaining, mode) + "%" : "—");
+    }).join("  ·  ");
+    return label + (entries.length > 2 ? "  +" + (entries.length - 2) : "");
+}
+
+// Lane detection mirrors Core's ProviderUsagePresentation.standardSemanticWindows so the bar
+// follows the reported window cadence instead of a provider name or a slot position.
+function sessionWindow(windows) {
+    return windows.filter(function(item) { return item.minutes >= 60 && item.minutes <= 720; })[0] || null;
+}
+
+function weeklyWindow(windows) {
+    return windows.filter(function(item) { return item.minutes === 10080; })[0] || null;
+}
+
+// Compact cadence label: 10080 -> "7D", 300 -> "5H".
+function laneLabel(minutes) {
+    if (!minutes || minutes <= 0) return "";
+    if (minutes % 1440 === 0) return (minutes / 1440) + "D";
+    if (minutes % 60 === 0) return (minutes / 60) + "H";
+    return minutes + "M";
+}
+
+// Mirrors MenuBarDisplayText.paceText: positive is a deficit, negative is a reserve.
+// An unavailable pace stays unavailable; it is never reported as being on pace.
+function paceDeltaText(delta) {
+    if (number(delta) === null) return "—";
+    var value = Math.round(Math.abs(delta));
+    return value === 0 ? "0%" : (delta >= 0 ? "+" : "-") + value + "%";
+}
+
+function laneSegments(entry, mode) {
+    var windows = entry.windows || [];
+    var session = sessionWindow(windows);
+    var weekly = weeklyWindow(windows);
+    var segments = [];
+    if (session) segments.push(laneLabel(session.minutes) + " " + quotaValue(session.remaining, mode) + "%");
+    // Pace belongs to the weekly window, not to whichever lane is most constrained.
+    if (weekly) segments.push(laneLabel(weekly.minutes) + " " + quotaValue(weekly.remaining, mode) + "%",
+        paceDeltaText(weekly.paceDelta));
+    if (segments.length || !windows.length) return segments;
+    // A provider reporting neither cadence keeps its first window rather than going blank.
+    return [(laneLabel(windows[0].minutes) || windows[0].label) + " " +
+        quotaValue(windows[0].remaining, mode) + "%"];
+}
+
+// Persistent bar label. Absent lanes contribute no text and no separator.
+function barLabel(entries, mode) {
+    var shown = entries.slice(0, 2);
+    var label = shown.map(function(entry) {
+        var segments = laneSegments(entry, mode);
+        return (shown.length > 1 ? providerTag(entry.provider) + " " : "") +
+            (segments.length ? segments.join(" · ") : "—");
     }).join("  ·  ");
     return label + (entries.length > 2 ? "  +" + (entries.length - 2) : "");
 }

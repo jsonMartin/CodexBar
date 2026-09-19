@@ -85,3 +85,61 @@ test('display preferences keep underlying quota and reset data intact', () => {
     assert.ok(model.resetText(time, 0, 'absolute').startsWith('Resets '));
     assert.ok(model.resetText(time, 0, 'both').includes(' · '));
 });
+
+const lanes = (windows, pace) => model.rows(JSON.stringify([{provider: 'codex', usage: windows, pace}]));
+const session = {usedPercent: 63, windowMinutes: 300, resetsAt: '2030-01-01T00:00:00Z'};
+const weekly = {usedPercent: 39, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'};
+
+test('bar shows session quota, weekly quota, then the weekly pace', () => {
+    const rows = lanes({primary: session, secondary: weekly}, {secondary: {deltaPercent: 14, summary: '14% in deficit'}});
+    assert.equal(model.barLabel(rows, 'remaining'), '5H 37% · 7D 61% · +14%');
+    assert.equal(model.barLabel(rows, 'used'), '5H 63% · 7D 39% · +14%');
+    assert.equal(rows[0].windows[1].minutes, 10080);
+});
+test('a weekly reserve keeps its negative sign and an exact pace reads as zero', () => {
+    assert.equal(model.barLabel(lanes({primary: session, secondary: weekly},
+        {secondary: {deltaPercent: -8}}), 'remaining'), '5H 37% · 7D 61% · -8%');
+    assert.equal(model.barLabel(lanes({secondary: weekly}, {secondary: {deltaPercent: 0.4}}), 'remaining'), '7D 61% · 0%');
+});
+test('pace always describes the weekly window, never the most constrained lane', () => {
+    const rows = lanes({primary: session, secondary: weekly},
+        {primary: {deltaPercent: 31}, secondary: {deltaPercent: -8}});
+    assert.equal(model.barLabel(rows, 'remaining'), '5H 37% · 7D 61% · -8%');
+});
+test('a provider without a session window omits that segment and its separator', () => {
+    const label = model.barLabel(lanes({secondary: weekly}, {secondary: {deltaPercent: 14}}), 'remaining');
+    assert.equal(label, '7D 61% · +14%');
+    assert.ok(!label.includes('5H'));
+    assert.ok(!label.startsWith(' ·'));
+});
+test('a provider without a weekly window shows the session lane alone', () => {
+    const label = model.barLabel(lanes({primary: session}, {primary: {deltaPercent: 14}}), 'remaining');
+    assert.equal(label, '5H 37%');
+    assert.ok(!label.includes('·'));
+    assert.ok(!label.includes('—'));
+});
+test('an unavailable weekly pace stays unavailable instead of reading as on pace', () => {
+    assert.equal(model.barLabel(lanes({secondary: weekly}, null), 'remaining'), '7D 61% · —');
+    for (const value of [{}, {deltaPercent: null}, {deltaPercent: 'nope'}, {deltaPercent: Infinity}])
+        assert.equal(model.barLabel(lanes({secondary: weekly}, {secondary: value}), 'remaining'), '7D 61% · —');
+});
+test('missing quota values never produce empty segments or stray separators', () => {
+    assert.equal(model.barLabel(lanes({primary: {usedPercent: null, windowMinutes: 300}, secondary: weekly},
+        {secondary: {deltaPercent: 14}}), 'remaining'), '7D 61% · +14%');
+    assert.equal(model.barLabel(lanes({}, null), 'remaining'), '—');
+    assert.equal(model.barLabel([], 'remaining'), '');
+    for (const label of [model.barLabel(lanes({secondary: weekly}, null), 'remaining'), model.barLabel(lanes({}, null), 'remaining')])
+        assert.ok(!/(^|\s)·\s*·|·\s*$|^\s*·/.test(label));
+});
+test('an unreported cadence keeps its own lane rather than borrowing weekly pace', () => {
+    const monthly = {usedPercent: 25, windowMinutes: 43200, resetsAt: '2030-01-02T00:00:00Z'};
+    assert.equal(model.barLabel(lanes({primary: monthly}, {primary: {deltaPercent: 14}}), 'remaining'), '30D 75%');
+    assert.equal(model.barLabel(lanes({primary: {usedPercent: 25}}, null), 'remaining'), 'Session 75%');
+});
+test('a failed provider row keeps the healthy provider labelled and never fabricates pace', () => {
+    const rows = model.rows(JSON.stringify([
+        {provider: 'codex', usage: {secondary: weekly}, pace: {secondary: {deltaPercent: 14}}},
+        {provider: 'claude', error: {message: 'secret upstream response'}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), 'CX 7D 61% · +14%  ·  CL —');
+    assert.ok(!JSON.stringify(rows).includes('secret'));
+});

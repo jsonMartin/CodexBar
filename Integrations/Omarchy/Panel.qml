@@ -40,7 +40,9 @@ Panel {
         id: button
         anchors.fill: parent
         bar: root.bar
-        text: !root.available ? "CodexBar —" : (root.snapshot.stale ? "! " : "") + (root.snapshot.summary || "CodexBar —")
+        // The backend formats the lanes and the weekly pace; the bar only prefixes stale data.
+        text: !root.available ? "CodexBar —" : (root.snapshot.stale ? "! " : "") +
+            (root.snapshot.barLabel || root.snapshot.summary || "CodexBar —")
         tooltipText: "CodexBar · quota " + (root.snapshot.quotaDisplay || "remaining") + "\nClick for usage · middle-click to refresh"
         onPressed: function(code) { if (code === Qt.MiddleButton) root.refresh(); else root.toggle(); }
     }

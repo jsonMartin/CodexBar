@@ -20,6 +20,14 @@ directory. Existing desktop preferences take precedence over old widget settings
 It also adds a launcher and login autostart entry. Provider authentication remains
 with the installed Linux CLI. The CLI resource bundle must stay beside its binary.
 
+The bar shows the session quota, the weekly quota and the weekly pace, as in
+`5H 37% · 7D 61% · +14%`. A positive pace is a deficit against the sustainable
+weekly rate and a negative one is a reserve, matching the menu bar on macOS. A
+lane the provider does not report contributes no text and no separator, so a
+weekly-only account reads `7D 61% · +14%`. A weekly window whose pace CodexBar
+cannot compute, such as an exhausted one, reads `7D 0% · —` rather than zero.
+Used or remaining percentages follow the quota preference in Settings.
+
 The widget reads the desktop's private IPC snapshot every five seconds; it never
 runs provider queries itself. If the backend is absent, opening Usage & Spend or
 Settings starts it. Refresh requests one shared backend refresh. Unknown quota
