@@ -4,6 +4,12 @@ function remaining(window) {
     return Math.round(Math.max(0, Math.min(100, 100 - window.usedPercent)));
 }
 
+// Duration name for a reported cadence; empty when the provider omits window metadata.
+function cadenceLabel(minutes) {
+    if (minutes >= 1440) return (minutes / 1440) + " day";
+    return minutes > 0 ? (minutes / 60) + " hour" : "";
+}
+
 function rows(text, showIdentity) {
     var decoded = JSON.parse(text);
     var entries = Array.isArray(decoded) ? decoded : [decoded];
@@ -17,13 +23,25 @@ function rows(text, showIdentity) {
             var window = usage[key];
             var left = remaining(window);
             if (left === null) return;
-            var minutes = window.windowMinutes;
-            var label = minutes >= 1440 ? (minutes / 1440) + " day" :
-                minutes > 0 ? (minutes / 60) + " hour" : ["Session", "Weekly", "Additional"][index];
+            var label = cadenceLabel(window.windowMinutes) || ["Session", "Weekly", "Additional"][index];
             var pace = entry.pace && entry.pace[key] ? entry.pace[key] : null;
-            windows.push({key: key, label: label, minutes: number(minutes), remaining: left,
+            windows.push({key: key, label: label, minutes: number(window.windowMinutes), remaining: left,
                 resetsAt: window.resetsAt || "", pace: pace ? String(pace.summary || "") : "",
                 paceDelta: pace ? number(pace.deltaPercent) : null});
+        });
+        // Extras come last: cadence lookups take the first match, and a scoped lane
+        // can share the 7-day cadence with the real weekly lane.
+        // The cap counts displayed lanes: filtering first keeps a real lane that trails
+        // unusable ones instead of spending the budget on entries that render nothing.
+        (Array.isArray(usage.extraRateWindows) ? usage.extraRateWindows : []).filter(function(extra) {
+            return remaining(extra && extra.window) !== null;
+        }).slice(0, 8).forEach(function(extra, index) {
+            var window = extra.window;
+            var label = displayText(extra.title, showIdentity).trim() ||
+                cadenceLabel(window.windowMinutes) || "Additional";
+            windows.push({key: String(extra.id || "extra-" + index), label: label,
+                minutes: number(window.windowMinutes), remaining: remaining(window),
+                resetsAt: window.resetsAt || "", pace: "", paceDelta: null, scoped: true});
         });
         return {
             provider: entry.provider,
@@ -128,12 +146,17 @@ function summary(entries, mode) {
 
 // Lane detection mirrors Core's ProviderUsagePresentation.standardSemanticWindows so the bar
 // follows the reported window cadence instead of a provider name or a slot position.
+// A scoped cap is excluded: it is rendered by name, and it usually shares the general
+// lane's cadence, so accepting it here would show the same lane twice whenever the
+// general one is missing.
 function sessionWindow(windows) {
-    return windows.filter(function(item) { return item.minutes >= 60 && item.minutes <= 720; })[0] || null;
+    return windows.filter(function(item) {
+        return !item.scoped && item.minutes >= 60 && item.minutes <= 720;
+    })[0] || null;
 }
 
 function weeklyWindow(windows) {
-    return windows.filter(function(item) { return item.minutes === 10080; })[0] || null;
+    return windows.filter(function(item) { return !item.scoped && item.minutes === 10080; })[0] || null;
 }
 
 // Compact cadence label: 10080 -> "7D", 300 -> "5H".
@@ -158,9 +181,18 @@ function laneSegments(entry, mode) {
     var weekly = weeklyWindow(windows);
     var segments = [];
     if (session) segments.push(laneLabel(session.minutes) + " " + quotaValue(session.remaining, mode) + "%");
-    // Pace belongs to the weekly window, not to whichever lane is most constrained.
-    if (weekly) segments.push(laneLabel(weekly.minutes) + " " + quotaValue(weekly.remaining, mode) + "%",
-        paceDeltaText(weekly.paceDelta));
+    if (weekly) segments.push(laneLabel(weekly.minutes) + " " + quotaValue(weekly.remaining, mode) + "%");
+    // A scoped cap is named by the provider, not by its cadence, because it usually
+    // shares one with the general lane it sits beside.
+    windows.forEach(function(item) {
+        // The popup keeps the provider's full title; the bar drops the qualifier it
+        // appends to distinguish a scoped cap from the general lane next to it.
+        if (item.scoped) segments.push(item.label.replace(/\s+only$/i, "") + " " +
+            quotaValue(item.remaining, mode) + "%");
+    });
+    // Pace belongs to the weekly window, not to whichever lane is most constrained,
+    // and it stays last so the quota lanes read together.
+    if (weekly) segments.push(paceDeltaText(weekly.paceDelta));
     if (segments.length || !windows.length) return segments;
     // A provider reporting neither cadence keeps its first window rather than going blank.
     return [(laneLabel(windows[0].minutes) || windows[0].label) + " " +

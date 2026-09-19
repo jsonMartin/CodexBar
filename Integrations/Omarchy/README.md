@@ -28,6 +28,11 @@ weekly-only account reads `7D 61% · +14%`. A weekly window whose pace CodexBar
 cannot compute, such as an exhausted one, reads `7D 0% · —` rather than zero.
 Used or remaining percentages follow the quota preference in Settings.
 
+Providers that report a model-scoped cap alongside their general quota, such as
+Claude's per-model weekly window, contribute an extra lane named by the provider's
+own title. Those lanes follow the standard session, weekly and additional windows,
+so a cadence lookup still resolves the general weekly quota first.
+
 The widget reads the desktop's private IPC snapshot every five seconds; it never
 runs provider queries itself. If the backend is absent, opening Usage & Spend or
 Settings starts it. Refresh requests one shared backend refresh. Unknown quota

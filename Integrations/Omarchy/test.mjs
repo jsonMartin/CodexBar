@@ -143,3 +143,88 @@ test('a failed provider row keeps the healthy provider labelled and never fabric
     assert.equal(model.barLabel(rows, 'remaining'), 'CX 7D 61% · +14%  ·  CL —');
     assert.ok(!JSON.stringify(rows).includes('secret'));
 });
+
+const scopedEntry = {provider: 'claude', usage: {
+    primary: {usedPercent: 21, windowMinutes: 300, resetsAt: '2026-09-18T18:00:00Z'},
+    secondary: {usedPercent: 71, windowMinutes: 10080, resetsAt: '2026-09-21T09:00:00Z'},
+    extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+        window: {usedPercent: 93, windowMinutes: 10080, resetsAt: '2026-09-21T09:00:00Z'}}]}};
+
+test('extra rate windows are appended after the standard lanes so the real weekly lane wins a cadence lookup', () => {
+    const row = model.rows(JSON.stringify([scopedEntry]))[0];
+    assert.deepEqual([...row.windows.map(window => window.key)],
+        ['primary', 'secondary', 'claude-weekly-scoped-fable']);
+    assert.deepEqual({...row.windows[2]},
+        {key: 'claude-weekly-scoped-fable', label: 'Fable only', minutes: 10080, remaining: 7,
+            resetsAt: '2026-09-21T09:00:00Z', pace: '', paceDelta: null, scoped: true});
+    assert.equal(row.error, '');
+});
+test('an extra rate window with an unusable quota is skipped', () => {
+    const entry = {provider: 'claude', usage: {extraRateWindows: [
+        {id: 'bad', title: 'Broken', window: {usedPercent: '93', windowMinutes: 10080}},
+        {id: 'good', title: 'Fable only', window: {usedPercent: 93, windowMinutes: 10080}}]}};
+    const row = model.rows(JSON.stringify([entry]))[0];
+    assert.deepEqual([...row.windows.map(window => window.key)], ['good']);
+});
+test('an extra rate window without a title still renders a duration label', () => {
+    const entry = {provider: 'claude', usage: {extraRateWindows: [
+        {id: 'a', title: '   ', window: {usedPercent: 50, windowMinutes: 10080}},
+        {id: 'b', window: {usedPercent: 50, windowMinutes: 300}},
+        {id: 'c', window: {usedPercent: 50}}]}};
+    const row = model.rows(JSON.stringify([entry]))[0];
+    assert.deepEqual([...row.windows.map(window => window.label)], ['7 day', '5 hour', 'Additional']);
+});
+test('extra rate window titles redact emails unless identity is explicitly enabled', () => {
+    const entry = {provider: 'claude', usage: {extraRateWindows: [
+        {id: 'scoped', title: 'Fable (private@example.com)', window: {usedPercent: 93, windowMinutes: 10080}}]}};
+    const input = JSON.stringify([entry]);
+    assert.equal(model.rows(input)[0].windows[0].label, 'Fable [hidden email]');
+    assert.equal(model.rows(input, true)[0].windows[0].label, 'Fable (private@example.com)');
+});
+test('extras without a usable window payload are skipped', () => {
+    const entry = {provider: 'claude', usage: {extraRateWindows: [
+        null, {id: 'no-window', title: 'No window'}, {id: 'no-percent', window: {windowMinutes: 60}},
+        {id: 'good', title: 'Fable only', window: {usedPercent: 93, windowMinutes: 10080}}]}};
+    const row = model.rows(JSON.stringify([entry]))[0];
+    assert.deepEqual([...row.windows.map(window => window.key)], ['good']);
+    assert.equal(row.error, '');
+});
+test('the extra-window cap counts displayed lanes, not skipped ones', () => {
+    const unusable = Array.from({length: 8}, (_, index) => (
+        {id: 'junk-' + index, title: 'Junk', window: {usedPercent: null}}));
+    const entry = {provider: 'claude', usage: {extraRateWindows: [...unusable,
+        {id: 'claude-weekly-scoped-fable', title: 'Fable only', window: {usedPercent: 93, windowMinutes: 10080}}]}};
+    assert.deepEqual([...model.rows(JSON.stringify([entry]))[0].windows.map(window => window.key)],
+        ['claude-weekly-scoped-fable']);
+});
+test('extra rate windows are capped at eight per provider', () => {
+    const extras = Array.from({length: 10}, (_, index) => (
+        {id: 'extra-' + index, title: 'Lane ' + index, window: {usedPercent: index, windowMinutes: 60}}));
+    const row = model.rows(JSON.stringify([{provider: 'claude', usage: {extraRateWindows: extras}}]))[0];
+    assert.equal(row.windows.length, 8);
+});
+
+test('a scoped cap appears in the bar by name, after the weekly lane and before the pace', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: session, secondary: weekly,
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 93, windowMinutes: 10080}}]},
+        pace: {secondary: {deltaPercent: 3}}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '5H 37% · 7D 61% · Fable 7% · +3%');
+});
+test('a scoped cap never displaces the general weekly lane or its pace', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        secondary: weekly,
+        extraRateWindows: [{id: 'scoped', title: 'Fable only',
+            window: {usedPercent: 93, windowMinutes: 10080}}]},
+        pace: {secondary: {deltaPercent: -8}}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '7D 61% · Fable 7% · -8%');
+});
+test('a scoped cap on a provider with no weekly lane emits no pace slot', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        extraRateWindows: [{id: 'scoped', title: 'Fable only',
+            window: {usedPercent: 93, windowMinutes: 10080}}]}}]));
+    const label = model.barLabel(rows, 'remaining');
+    assert.equal(label, 'Fable 7%');
+    assert.ok(!label.includes('—'));
+});
