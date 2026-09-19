@@ -33,6 +33,12 @@ Claude's per-model weekly window, contribute an extra lane named by the provider
 own title. Those lanes follow the standard session, weekly and additional windows,
 so a cadence lookup still resolves the general weekly quota first.
 
+Each provider is marked by its own logo, recoloured to the bar's foreground so
+themes still apply. A provider whose logo is not installed keeps a short text tag
+instead of a gap. The installer and the release archive carry the logos beside the
+adapter; `barEntries` in the snapshot supplies one tag-and-text pair per displayed
+provider, and an older backend that publishes none falls back to the plain label.
+
 The widget reads the desktop's private IPC snapshot every five seconds; it never
 runs provider queries itself. If the backend is absent, opening Usage & Spend or
 Settings starts it. Refresh requests one shared backend refresh. Unknown quota

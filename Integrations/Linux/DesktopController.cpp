@@ -39,7 +39,7 @@ void stop(QProcess &process) {
 }
 
 DesktopController::DesktopController(const QString &cliOverride, QObject *parent) : QObject(parent) {
-    m_usageModel = module(m_engine, ":/Shared/Usage.js", "rows:rows, costs:costs, command:command, summary:summary, barLabel:barLabel, resetText:resetText");
+    m_usageModel = module(m_engine, ":/Shared/Usage.js", "rows:rows, costs:costs, command:command, summary:summary, barLabel:barLabel, barSegments:barSegments, resetText:resetText");
     m_noticeModel = module(m_engine, ":/Shared/Notifications.js", "transition:transition, summary:summary");
     m_noticeState = m_engine.newObject();
     loadSettings(cliOverride);
@@ -295,6 +295,7 @@ void DesktopController::updateLabels() {
     const auto mode = m_settings.value("quotaDisplay").toString();
     m_summary = call(m_usageModel, "summary", {rows, mode}).toString();
     m_barLabel = call(m_usageModel, "barLabel", {rows, mode}).toString();
+    m_barEntries = QJsonArray::fromVariantList(call(m_usageModel, "barSegments", {rows, mode}).toVariant().toList());
 }
 
 QJsonObject DesktopController::snapshot() const {
@@ -318,6 +319,7 @@ QJsonObject DesktopController::snapshot() const {
             {"error", row.value("error").toString()}});
     }
     return {{"schemaVersion", 1}, {"pid", QCoreApplication::applicationPid()}, {"summary", m_summary}, {"barLabel", m_barLabel},
+        {"barEntries", m_barEntries},
         {"entries", compact}, {"quotaDisplay", m_settings.value("quotaDisplay").toString()}, {"busy", busy()}, {"stale", stale()}, {"error", m_error},
         {"updated", updated()}, {"costBusy", costBusy()}, {"costProviders", m_spending.size()}, {"costError", m_costError}};
 }

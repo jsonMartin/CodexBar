@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -40,11 +41,96 @@ Panel {
         id: button
         anchors.fill: parent
         bar: root.bar
+        // One segment per displayed provider; older backends publish no barEntries and get the plain label.
+        readonly property var segments: root.available && Array.isArray(root.snapshot.barEntries) ? root.snapshot.barEntries : []
+        readonly property bool icons: segments.length > 0
         // The backend formats the lanes and the weekly pace; the bar only prefixes stale data.
         text: !root.available ? "CodexBar —" : (root.snapshot.stale ? "! " : "") +
             (root.snapshot.barLabel || root.snapshot.summary || "CodexBar —")
+        // The own label stays the tooltip fallback and the fallback renderer; icons replace it when present.
+        labelVisible: !icons
+        fixedWidth: icons ? badges.implicitWidth + scaledHorizontalMargin * 2 : -1
         tooltipText: "CodexBar · quota " + (root.snapshot.quotaDisplay || "remaining") + "\nClick for usage · middle-click to refresh"
         onPressed: function(code) { if (code === Qt.MiddleButton) root.refresh(); else root.toggle(); }
+        Row {
+            id: badges
+            anchors.centerIn: parent
+            visible: button.icons
+            spacing: Style.space(4)
+            Text {
+                visible: root.snapshot.stale === true
+                text: "!"
+                color: button.foreground
+                font.family: button.fontFamily; font.pixelSize: button.fontSize
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Repeater {
+                model: button.segments
+                Row {
+                    id: segment
+                    required property var modelData
+                    required property int index
+                    spacing: Style.space(4)
+                    Text {
+                        visible: segment.index > 0
+                        text: "·"
+                        color: button.foreground; opacity: 0.55
+                        font.family: button.fontFamily; font.pixelSize: button.fontSize
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Item {
+                        id: badge
+                        // A provider without an installed logo keeps its text tag instead of a gap.
+                        readonly property url icon: modelData && modelData.provider
+                            ? Qt.resolvedUrl("icons/ProviderIcon-" + modelData.provider + ".svg") : ""
+                        readonly property bool loaded: badgeIcon.status === Image.Ready
+                        implicitWidth: Math.max(badgeIcon.width, badgeTag.implicitWidth)
+                        implicitHeight: Math.max(badgeIcon.height, badgeTag.implicitHeight)
+                        width: implicitWidth; height: implicitHeight
+                        anchors.verticalCenter: parent.verticalCenter
+                        Image {
+                            id: badgeIcon
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: badge.icon
+                            // Without sourceSize the 100x100 SVGs rasterise at natural size and look soft.
+                            sourceSize: Qt.size(Math.round(button.fontSize), Math.round(button.fontSize))
+                            visible: false
+                        }
+                        MultiEffect {
+                            anchors.fill: badgeIcon
+                            source: badgeIcon
+                            visible: badge.loaded
+                            colorization: 1.0
+                            colorizationColor: button.foreground
+                        }
+                        Text {
+                            id: badgeTag
+                            visible: !badge.loaded
+                            text: modelData && modelData.tag ? modelData.tag : ""
+                            color: button.foreground
+                            font.family: button.fontFamily; font.pixelSize: button.fontSize
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Text {
+                        text: modelData && modelData.text ? modelData.text : ""
+                        color: button.foreground
+                        font.family: button.fontFamily; font.pixelSize: button.fontSize
+                        textFormat: Text.PlainText
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+            }
+            Text {
+                // Providers beyond the shown two, matching barLabel's suffix.
+                visible: root.available && Array.isArray(root.snapshot.entries) &&
+                    root.snapshot.entries.length > button.segments.length
+                text: "+" + (root.snapshot.entries.length - button.segments.length)
+                color: button.foreground
+                font.family: button.fontFamily; font.pixelSize: button.fontSize
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
     }
     KeyboardPanel {
         id: popup

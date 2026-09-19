@@ -143,6 +143,24 @@ test('a failed provider row keeps the healthy provider labelled and never fabric
     assert.equal(model.barLabel(rows, 'remaining'), 'CX 7D 61% · +14%  ·  CL —');
     assert.ok(!JSON.stringify(rows).includes('secret'));
 });
+test('bar segments give one tag-and-text pair per shown provider and never embed the tag in text', () => {
+    const rows = model.rows(JSON.stringify([
+        {provider: 'codex', usage: {primary: session, secondary: weekly}, pace: {secondary: {deltaPercent: 14}}},
+        {provider: 'claude', error: {message: 'secret upstream response'}},
+        {provider: 'gemini', usage: {secondary: weekly}}]));
+    assert.deepEqual([...model.barSegments(rows, 'remaining').map(segment => ({...segment}))], [
+        {provider: 'codex', tag: 'CX', text: '5H 37% · 7D 61% · +14%'},
+        {provider: 'claude', tag: 'CL', text: '—'}]);
+});
+test('barLabel is exactly the tagged segments joined, so the two formatters cannot drift', () => {
+    const rows = model.rows(JSON.stringify([
+        {provider: 'codex', usage: {primary: session, secondary: weekly}, pace: {secondary: {deltaPercent: 14}}},
+        {provider: 'claude', error: {}}]));
+    const segments = model.barSegments(rows, 'remaining');
+    assert.equal(model.barLabel(rows, 'remaining'),
+        segments.map(segment => segment.tag + ' ' + segment.text).join('  ·  '));
+    assert.equal(model.barLabel(rows, 'remaining'), 'CX 5H 37% · 7D 61% · +14%  ·  CL —');
+});
 
 const scopedEntry = {provider: 'claude', usage: {
     primary: {usedPercent: 21, windowMinutes: 300, resetsAt: '2026-09-18T18:00:00Z'},

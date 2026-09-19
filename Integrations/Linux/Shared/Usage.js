@@ -199,13 +199,22 @@ function laneSegments(entry, mode) {
         quotaValue(windows[0].remaining, mode) + "%"];
 }
 
+// One entry per shown provider: icon adapters draw `tag` (or a logo) before `text`,
+// which is the lane string without the text prefix. Absent lanes contribute no
+// separator; a provider with nothing to show keeps the em dash.
+function barSegments(entries, mode) {
+    return entries.slice(0, 2).map(function(entry) {
+        var segments = laneSegments(entry, mode);
+        return {provider: entry.provider, tag: providerTag(entry.provider),
+            text: segments.length ? segments.join(" · ") : "—"};
+    });
+}
+
 // Persistent bar label. Absent lanes contribute no text and no separator.
 function barLabel(entries, mode) {
-    var shown = entries.slice(0, 2);
+    var shown = barSegments(entries, mode);
     var label = shown.map(function(entry) {
-        var segments = laneSegments(entry, mode);
-        return (shown.length > 1 ? providerTag(entry.provider) + " " : "") +
-            (segments.length ? segments.join(" · ") : "—");
+        return (shown.length > 1 ? entry.tag + " " : "") + entry.text;
     }).join("  ·  ");
     return label + (entries.length > 2 ? "  +" + (entries.length - 2) : "");
 }
