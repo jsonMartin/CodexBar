@@ -143,14 +143,23 @@ test('a failed provider row keeps the healthy provider labelled and never fabric
     assert.equal(model.barLabel(rows, 'remaining'), 'CX 7D 61% · +14%  ·  CL —');
     assert.ok(!JSON.stringify(rows).includes('secret'));
 });
-test('bar segments give one tag-and-text pair per shown provider and never embed the tag in text', () => {
+test('bar segments give one tag-and-text pair per queried provider and never embed the tag in text', () => {
     const rows = model.rows(JSON.stringify([
         {provider: 'codex', usage: {primary: session, secondary: weekly}, pace: {secondary: {deltaPercent: 14}}},
         {provider: 'claude', error: {message: 'secret upstream response'}},
         {provider: 'gemini', usage: {secondary: weekly}}]));
     assert.deepEqual([...model.barSegments(rows, 'remaining').map(segment => ({...segment}))], [
         {provider: 'codex', tag: 'CX', text: '5H 37% · 7D 61% · +14%'},
-        {provider: 'claude', tag: 'CL', text: '—'}]);
+        {provider: 'claude', tag: 'CL', text: '—'},
+        {provider: 'gemini', tag: 'gemini', text: '7D 61%'}]);
+});
+test('every configured provider reaches the bar rather than collapsing into an overflow count', () => {
+    const rows = model.rows(JSON.stringify(['codex', 'claude', 'gemini', 'copilot', 'cursor'].map(provider => (
+        {provider: provider, usage: {secondary: weekly}}))));
+    const label = model.barLabel(rows, 'remaining');
+    assert.equal(model.barSegments(rows, 'remaining').length, 5);
+    for (const tag of ['CX', 'CL', 'gemini', 'copilot', 'cursor']) assert.ok(label.includes(tag + ' 7D 61%'));
+    assert.ok(!/\+\d/.test(label));
 });
 test('barLabel is exactly the tagged segments joined, so the two formatters cannot drift', () => {
     const rows = model.rows(JSON.stringify([
@@ -255,4 +264,23 @@ test('backup or reserve scoped caps get no bar lane, while real scoped caps keep
         extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
             window: {usedPercent: 93, windowMinutes: 10080}}]}, null);
     assert.equal(model.barLabel(fable, 'remaining'), '7D 61% · Fable 7%');
+});
+
+test('a scoped cap that merely restates its general lane stays out of the bar', () => {
+    const mirrored = model.rows(JSON.stringify([{provider: 'antigravity', usage: {
+        primary: {usedPercent: 100, windowMinutes: 300, resetsAt: '2030-01-01T00:00:00Z'},
+        secondary: {usedPercent: 4, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'},
+        extraRateWindows: [
+            {id: 'g5', title: 'Gemini 5-hour', window: {usedPercent: 100, windowMinutes: 300}},
+            {id: 'gw', title: 'Gemini weekly', window: {usedPercent: 4, windowMinutes: 10080}},
+            {id: 'cw', title: 'Claude/GPT weekly', window: {usedPercent: 0, windowMinutes: 10080}}]}}]));
+    assert.equal(model.barLabel(mirrored, 'remaining'), '5H 0% · 7D 96%');
+    // The popup still receives every lane the provider reported.
+    assert.equal(mirrored[0].windows.length, 5);
+});
+test('a scoped cap tighter than its general lane still earns a bar segment', () => {
+    const binding = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        secondary: {usedPercent: 71, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'},
+        extraRateWindows: [{id: 'f', title: 'Fable only', window: {usedPercent: 99, windowMinutes: 10080}}]}}]));
+    assert.equal(model.barLabel(binding, 'remaining'), '7D 29% · Fable 1%');
 });

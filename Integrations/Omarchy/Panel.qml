@@ -124,20 +124,6 @@ Panel {
                     }
                 }
             }
-            Text {
-                // Providers beyond the shown two, matching barLabel's suffix.
-                readonly property int extra: {
-                    var total = root.available && root.snapshot && Array.isArray(root.snapshot.entries)
-                        ? root.snapshot.entries.length : 0
-                    var shown = Array.isArray(button.segments) ? button.segments.length : 0
-                    return total - shown
-                }
-                visible: extra > 0
-                text: "+" + extra
-                color: button.foreground
-                font.family: button.fontFamily; font.pixelSize: button.fontSize
-                anchors.verticalCenter: parent.verticalCenter
-            }
         }
     }
     KeyboardPanel {

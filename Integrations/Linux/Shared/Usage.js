@@ -175,6 +175,14 @@ function paceDeltaText(delta) {
     return value === 0 ? "0%" : (delta >= 0 ? "+" : "-") + value + "%";
 }
 
+// A scoped cap earns bar space only while it binds harder than the general lane of
+// its own cadence. Antigravity mirrors its general lanes per model family, which
+// would otherwise restate the same numbers four times; the popup still lists them.
+function bindingScope(item, session, weekly) {
+    var general = item.minutes === 10080 ? weekly : item.minutes >= 60 && item.minutes <= 720 ? session : null;
+    return !general || item.remaining < general.remaining;
+}
+
 function laneSegments(entry, mode) {
     var windows = entry.windows || [];
     var session = sessionWindow(windows);
@@ -188,10 +196,10 @@ function laneSegments(entry, mode) {
         // Backup/reserve pools (codex's gpt-reserve) are not spendable quota and get no
         // bar lane; a provider's real scoped cap (claude's Fable) stays.
         if (item.scoped && /reserve|backup/i.test(item.key + " " + item.label)) return;
+        if (!item.scoped || !bindingScope(item, session, weekly)) return;
         // The popup keeps the provider's full title; the bar drops the qualifier it
         // appends to distinguish a scoped cap from the general lane next to it.
-        if (item.scoped) segments.push(item.label.replace(/\s+only$/i, "") + " " +
-            quotaValue(item.remaining, mode) + "%");
+        segments.push(item.label.replace(/\s+only$/i, "") + " " + quotaValue(item.remaining, mode) + "%");
     });
     // Pace belongs to the weekly window, not to whichever lane is most constrained,
     // and it stays last so the quota lanes read together. An unavailable pace gets no
@@ -205,9 +213,11 @@ function laneSegments(entry, mode) {
 
 // One entry per shown provider: icon adapters draw `tag` (or a logo) before `text`,
 // which is the lane string without the text prefix. Absent lanes contribute no
-// separator; a provider with nothing to show keeps the em dash.
+// separator; a provider with nothing to show keeps the em dash. Every queried
+// provider is shown, because the configured provider list is already the limit
+// the user set; the tray tooltip keeps its own two-provider summary.
 function barSegments(entries, mode) {
-    return entries.slice(0, 2).map(function(entry) {
+    return entries.map(function(entry) {
         var segments = laneSegments(entry, mode);
         return {provider: entry.provider, tag: providerTag(entry.provider),
             text: segments.length ? segments.join(" · ") : "—"};
@@ -217,10 +227,9 @@ function barSegments(entries, mode) {
 // Persistent bar label. Absent lanes contribute no text and no separator.
 function barLabel(entries, mode) {
     var shown = barSegments(entries, mode);
-    var label = shown.map(function(entry) {
+    return shown.map(function(entry) {
         return (shown.length > 1 ? entry.tag + " " : "") + entry.text;
     }).join("  ·  ");
-    return label + (entries.length > 2 ? "  +" + (entries.length - 2) : "");
 }
 
 function resetLabel(value, now) {
