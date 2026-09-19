@@ -87,8 +87,11 @@ Panel {
                         readonly property url icon: modelData && modelData.provider
                             ? Qt.resolvedUrl("icons/ProviderIcon-" + modelData.provider + ".svg") : ""
                         readonly property bool loaded: badgeIcon.status === Image.Ready
-                        implicitWidth: Math.max(badgeIcon.width, badgeTag.implicitWidth)
-                        implicitHeight: Math.max(badgeIcon.height, badgeTag.implicitHeight)
+                        // Size to whichever child is drawn. Taking the larger of the two
+                        // reserved the hidden tag's width, which is the full provider id for
+                        // anything without a short tag, leaving a gap beside the logo.
+                        implicitWidth: badge.loaded ? badgeIcon.width : badgeTag.implicitWidth
+                        implicitHeight: badge.loaded ? badgeIcon.height : badgeTag.implicitHeight
                         width: implicitWidth; height: implicitHeight
                         anchors.verticalCenter: parent.verticalCenter
                         Image {
