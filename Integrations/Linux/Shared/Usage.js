@@ -4,6 +4,12 @@ function remaining(window) {
     return Math.round(Math.max(0, Math.min(100, 100 - window.usedPercent)));
 }
 
+// Duration name for a reported cadence; empty when the provider omits window metadata.
+function cadenceLabel(minutes) {
+    if (minutes >= 1440) return (minutes / 1440) + " day";
+    return minutes > 0 ? (minutes / 60) + " hour" : "";
+}
+
 function rows(text, showIdentity) {
     var decoded = JSON.parse(text);
     var entries = Array.isArray(decoded) ? decoded : [decoded];
@@ -17,11 +23,22 @@ function rows(text, showIdentity) {
             var window = usage[key];
             var left = remaining(window);
             if (left === null) return;
-            var minutes = window.windowMinutes;
-            var label = minutes >= 1440 ? (minutes / 1440) + " day" :
-                minutes > 0 ? (minutes / 60) + " hour" : ["Session", "Weekly", "Additional"][index];
+            var label = cadenceLabel(window.windowMinutes) || ["Session", "Weekly", "Additional"][index];
             windows.push({key: key, label: label, remaining: left, resetsAt: window.resetsAt || "",
                 pace: entry.pace && entry.pace[key] ? String(entry.pace[key].summary || "") : ""});
+        });
+        // Extras come last: cadence lookups take the first match, and a scoped lane
+        // can share the 7-day cadence with the real weekly lane.
+        // The cap counts displayed lanes: filtering first keeps a real lane that trails
+        // unusable ones instead of spending the budget on entries that render nothing.
+        (Array.isArray(usage.extraRateWindows) ? usage.extraRateWindows : []).filter(function(extra) {
+            return remaining(extra && extra.window) !== null;
+        }).slice(0, 8).forEach(function(extra, index) {
+            var window = extra.window;
+            var label = displayText(extra.title, showIdentity).trim() ||
+                cadenceLabel(window.windowMinutes) || "Additional";
+            windows.push({key: String(extra.id || "extra-" + index), label: label,
+                remaining: remaining(window), resetsAt: window.resetsAt || "", pace: ""});
         });
         return {
             provider: entry.provider,
