@@ -16,7 +16,9 @@ Panel {
     readonly property string executable: String(setting("desktopExecutable", "codexbar-linux"))
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
-    function poll() { if (!reader.running) reader.running = true; }
+    // Clear the body first: a reader that exits without emitting would otherwise leave the
+    // previous cycle's text to be parsed again and reported as a fresh, healthy snapshot.
+    function poll() { if (!reader.running) { response = ""; reader.running = true; } }
     function launch(page) { Quickshell.execDetached([executable, "--" + page]); close(); }
     function refresh() { Quickshell.execDetached([executable, "--refresh"]); }
     Component.onCompleted: Qt.callLater(poll)
