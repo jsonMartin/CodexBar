@@ -120,7 +120,10 @@ Hidden={'true' if startup_disabled else 'false'}
     atomic(config / f'autostart/{APP_ID}.desktop', startup.encode(), 0o644, follow_links=True)
     if args.omarchy:
         plugin = config / 'omarchy/plugins' / PLUGIN_ID
-        if plugin.exists():
+        # exists() follows links, so a broken one reports False and mkdir then fails on the
+        # link itself. Archive whatever occupies the path, including a link a dotfiles tool
+        # placed there, rather than writing through it: the adapter is this installer's payload.
+        if plugin.exists() or plugin.is_symlink():
             backup = config / 'omarchy/backups' / f'{PLUGIN_ID}-{stamp}'
             backup.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(plugin), backup)
