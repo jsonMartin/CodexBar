@@ -99,7 +99,10 @@ Panel {
                             anchors.verticalCenter: parent.verticalCenter
                             source: badge.icon
                             // Without sourceSize the 100x100 SVGs rasterise at natural size and look soft.
-                            sourceSize: Qt.size(Math.round(button.fontSize), Math.round(button.fontSize))
+                            // A logo needs more than cap height to read at bar size, so it runs a
+                            // quarter larger than the text it labels and stays centred on it.
+                            readonly property int extent: Math.round(button.fontSize * 1.5)
+                            sourceSize: Qt.size(extent, extent)
                             visible: false
                         }
                         MultiEffect {
