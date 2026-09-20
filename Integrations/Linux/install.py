@@ -13,15 +13,20 @@ APP_ID = 'com.steipete.CodexBar'
 PLUGIN_ID = 'steipete.codexbar'
 
 
-def atomic(path, content, mode=0o600):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
+def atomic(path, content, mode=0o600, follow_links=False):
+    # Renaming onto a symlink replaces the link itself. For files a dotfiles manager
+    # commonly owns, resolve the link first and write its target instead, so the managed
+    # copy receives the change and the link survives. The installed binary and icon keep
+    # replace semantics: they are this installer's own payload, not user configuration.
+    target = Path(os.path.realpath(path)) if follow_links and path.is_symlink() else path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as handle:
         temporary = Path(handle.name)
         handle.write(content)
         handle.flush()
         os.fsync(handle.fileno())
     temporary.chmod(mode)
-    temporary.replace(path)
+    temporary.replace(target)
 
 
 def quoted(path):
@@ -77,7 +82,7 @@ def main():
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     if preferences.exists():
         shutil.copy2(preferences, preferences.with_name(f'linux.json.backup-{stamp}'))
-    atomic(preferences, (json.dumps(settings, indent=2) + '\n').encode())
+    atomic(preferences, (json.dumps(settings, indent=2) + '\n').encode(), follow_links=True)
     destination = Path.home() / '.local/bin/codexbar-linux'
     atomic(destination, binary.read_bytes(), 0o755)
     icon = data / 'icons/hicolor/scalable/apps/codexbar.svg'
@@ -101,7 +106,7 @@ Exec={quoted(destination)} --settings
 Name=Usage & Spend
 Exec={quoted(destination)} --spending
 '''
-    atomic(data / f'applications/{APP_ID}.desktop', launcher.encode(), 0o644)
+    atomic(data / f'applications/{APP_ID}.desktop', launcher.encode(), 0o644, follow_links=True)
     startup_path = config / f'autostart/{APP_ID}.desktop'
     startup_disabled = args.no_autostart or (startup_path.exists() and 'Hidden=true' in startup_path.read_text())
     startup = f'''[Desktop Entry]
@@ -112,7 +117,7 @@ Icon=codexbar
 Terminal=false
 Hidden={'true' if startup_disabled else 'false'}
 '''
-    atomic(config / f'autostart/{APP_ID}.desktop', startup.encode(), 0o644)
+    atomic(config / f'autostart/{APP_ID}.desktop', startup.encode(), 0o644, follow_links=True)
     if args.omarchy:
         plugin = config / 'omarchy/plugins' / PLUGIN_ID
         if plugin.exists():
@@ -131,7 +136,8 @@ Hidden={'true' if startup_disabled else 'false'}
             if key not in ['id', 'desktopExecutable']:
                 existing.pop(key)
         existing['desktopExecutable'] = str(destination)
-        atomic(shell_path, (json.dumps(shell, indent=2) + '\n').encode(), shell_path.stat().st_mode & 0o777)
+        atomic(shell_path, (json.dumps(shell, indent=2) + '\n').encode(), shell_path.stat().st_mode & 0o777,
+                follow_links=True)
     print(f'Installed {destination}')
     print('Run codexbar-linux --settings, or open CodexBar from the application launcher.')
 
