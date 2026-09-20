@@ -47,7 +47,8 @@ class InstallTests(unittest.TestCase):
             (managed / 'codexbar').mkdir()
             (managed / 'autostart').mkdir()
             tracked = managed / 'omarchy/shell.json'
-            tracked.write_text(json.dumps({'bar': {'layout': {'right': [{'id': 'omarchy.clock'}]}}}))
+            tracked.write_text(json.dumps({'bar': {'layout': {'right': [
+                {'id': 'omarchy.clock', 'format': "'\uf017  'HH:mm"}]}}}, ensure_ascii=False))
             (config / 'omarchy').mkdir(parents=True)
             (config / 'omarchy/shell.json').symlink_to(tracked)
             # A preferences link can predate the install; an autostart link is created by it.
@@ -69,6 +70,9 @@ class InstallTests(unittest.TestCase):
                           [entry['id'] for entry in json.loads(tracked.read_text())['bar']['layout']['right']])
             self.assertEqual(json.loads(preferences.read_text())['provider'], 'claude')
             self.assertIn('--background', startup.read_text())
+            # Rewriting a managed file must not turn its glyphs into escapes and churn the diff.
+            self.assertIn('\uf017', tracked.read_text())
+            self.assertNotIn('\\uf017', tracked.read_text())
             # The installer's own payload still replaces whatever occupies its path.
             self.assertFalse((home / '.local/bin/codexbar-linux').is_symlink())
 

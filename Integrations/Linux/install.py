@@ -82,7 +82,7 @@ def main():
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     if preferences.exists():
         shutil.copy2(preferences, preferences.with_name(f'linux.json.backup-{stamp}'))
-    atomic(preferences, (json.dumps(settings, indent=2) + '\n').encode(), follow_links=True)
+    atomic(preferences, (json.dumps(settings, indent=2, ensure_ascii=False) + '\n').encode(), follow_links=True)
     destination = Path.home() / '.local/bin/codexbar-linux'
     atomic(destination, binary.read_bytes(), 0o755)
     icon = data / 'icons/hicolor/scalable/apps/codexbar.svg'
@@ -142,7 +142,7 @@ Hidden={'true' if startup_disabled else 'false'}
             if key not in ['id', 'desktopExecutable']:
                 existing.pop(key)
         existing['desktopExecutable'] = str(destination)
-        atomic(shell_path, (json.dumps(shell, indent=2) + '\n').encode(), shell_path.stat().st_mode & 0o777,
+        atomic(shell_path, (json.dumps(shell, indent=2, ensure_ascii=False) + '\n').encode(), shell_path.stat().st_mode & 0o777,
                 follow_links=True)
     print(f'Installed {destination}')
     print('Run codexbar-linux --settings, or open CodexBar from the application launcher.')
