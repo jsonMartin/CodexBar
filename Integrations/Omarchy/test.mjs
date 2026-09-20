@@ -408,3 +408,9 @@ test('an unmeasurable window reaches neither the notifications nor the copied su
     assert.equal(rows[0].windows.length, 1);
     assert.ok(!JSON.stringify(rows).includes('Billing'));
 });
+
+test('a sub-hour cadence is named in minutes rather than rounded away', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'custom',
+        usage: {primary: {usedPercent: 40, windowMinutes: 45}}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '45M 60%');
+});
