@@ -476,8 +476,8 @@ test('the label and the per-provider entries show the same providers, in the sam
         {provider: 'claude', usage: {primary: {usedPercent: 20, windowMinutes: 300}}},
         {provider: 'gemini', usage: {primary: {usedPercent: 30, windowMinutes: 300}}}]));
     const segments = model.barSegments(rows, 'remaining');
-    assert.deepEqual([...segments.map(segment => segment.provider)], ['codex', 'claude']);
-    assert.deepEqual([...segments.map(segment => segment.text)], ['5H 90%', '5H 80%']);
-    // The label shows the same two and says a third exists, so neither view loses a provider.
-    assert.equal(model.barLabel(rows, 'remaining'), 'CX 5H 90%  ·  CL 5H 80%  +1');
+    assert.deepEqual([...segments.map(segment => segment.provider)], ['codex', 'claude', 'gemini']);
+    assert.deepEqual([...segments.map(segment => segment.text)], ['5H 90%', '5H 80%', '5H 70%']);
+    // Every configured provider appears, so there is nothing left for an overflow count to say.
+    assert.equal(model.barLabel(rows, 'remaining'), 'CX 5H 90%  ·  CL 5H 80%  ·  gemini 5H 70%');
 });

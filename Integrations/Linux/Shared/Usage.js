@@ -317,7 +317,7 @@ function laneSegments(entry, mode, options) {
 // and a provider with nothing to show keeps the em dash. The cap on how many providers appear
 // lives here rather than in barLabel, so the label and these entries cannot disagree.
 function barSegments(entries, mode, options) {
-    return entries.slice(0, 2).map(function(entry) {
+    return entries.map(function(entry) {
         var segments = laneSegments(entry, mode, options);
         return {provider: entry.provider, tag: providerTag(entry.provider),
             text: segments.length ? segments.join(" · ") : "—"};
@@ -327,10 +327,9 @@ function barSegments(entries, mode, options) {
 // Persistent bar label. Absent lanes contribute no text and no separator.
 function barLabel(entries, mode, options) {
     var shown = barSegments(entries, mode, options);
-    var label = shown.map(function(entry) {
+    return shown.map(function(entry) {
         return (shown.length > 1 ? entry.tag + " " : "") + entry.text;
     }).join("  ·  ");
-    return label + (entries.length > 2 ? "  +" + (entries.length - 2) : "");
 }
 
 function resetLabel(value, now) {

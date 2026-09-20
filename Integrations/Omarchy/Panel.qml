@@ -132,21 +132,6 @@ Panel {
                     }
                 }
             }
-            Text {
-                // The label carrying this count is hidden while marks are drawn, so the count
-                // must be drawn here too or a provider beyond the shown ones vanishes silently.
-                readonly property int extra: {
-                    var total = root.available && root.snapshot && Array.isArray(root.snapshot.entries)
-                        ? root.snapshot.entries.length : 0
-                    var shown = Array.isArray(button.segments) ? button.segments.length : 0
-                    return total - shown
-                }
-                visible: extra > 0
-                text: "+" + extra
-                color: button.foreground
-                font.family: button.fontFamily; font.pixelSize: button.fontSize
-                anchors.verticalCenter: parent.verticalCenter
-            }
         }
     }
     KeyboardPanel {
