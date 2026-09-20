@@ -96,7 +96,7 @@ bool DesktopController::validate(QVariantMap &values) {
         !QStringList{"meters", "icon"}.contains(values.value("trayStyle").toString())) {
         m_configError = "Unsupported display preference."; return false;
     }
-    for (const auto &key : {"allAccounts", "showIdentity", "showCosts", "showStatus", "notifications", "showTray", "refreshOnOpen", "showPace", "warningColors", "followOmarchyTheme"})
+    for (const auto &key : {"allAccounts", "showIdentity", "showCosts", "showStatus", "notifications", "showTray", "refreshOnOpen", "showPace", "showScopedCaps", "warningColors", "followOmarchyTheme"})
         values[key] = values.value(key).toBool();
     return true;
 }
@@ -105,7 +105,7 @@ void DesktopController::loadSettings(const QString &cliOverride) {
     m_settings = {{"executable", "codexbar"}, {"provider", "codex"}, {"source", "auto"},
         {"refreshSeconds", 300}, {"accountIndex", 0}, {"notifyThreshold", 10}, {"allAccounts", false},
         {"showIdentity", false}, {"showCosts", true}, {"showStatus", true}, {"notifications", false}, {"showTray", true}, {"refreshOnOpen", false}, {"providerOrder", QStringList{}},
-        {"quotaDisplay", "remaining"}, {"resetDisplay", "countdown"}, {"showPace", true},
+        {"quotaDisplay", "remaining"}, {"resetDisplay", "countdown"}, {"showPace", true}, {"showScopedCaps", false},
         {"warningColors", true}, {"trayStyle", "meters"}, {"followOmarchyTheme", false}};
     m_configPath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/codexbar/linux.json";
     QFile file(m_configPath);
@@ -293,9 +293,15 @@ void DesktopController::showWindow(const QString &page) {
 void DesktopController::updateLabels() {
     const auto rows = m_engine.toScriptValue(m_entries);
     const auto mode = m_settings.value("quotaDisplay").toString();
+    // The bar honours the same pace preference as the native cards, and keeps per-model
+    // scoped caps opt-in: most providers that publish them simply restate a general lane.
+    auto options = m_engine.newObject();
+    options.setProperty("pace", m_settings.value("showPace").toBool());
+    options.setProperty("scopedCaps", m_settings.value("showScopedCaps").toBool());
     m_summary = call(m_usageModel, "summary", {rows, mode}).toString();
-    m_barLabel = call(m_usageModel, "barLabel", {rows, mode}).toString();
-    m_barEntries = QJsonArray::fromVariantList(call(m_usageModel, "barSegments", {rows, mode}).toVariant().toList());
+    m_barLabel = call(m_usageModel, "barLabel", {rows, mode, options}).toString();
+    m_barEntries = QJsonArray::fromVariantList(
+        call(m_usageModel, "barSegments", {rows, mode, options}).toVariant().toList());
 }
 
 QJsonObject DesktopController::snapshot() const {

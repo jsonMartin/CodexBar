@@ -149,14 +149,23 @@ function summary(entries, mode) {
 // A scoped cap is excluded: it is rendered by name, and it usually shares the general
 // lane's cadence, so accepting it here would show the same lane twice whenever the
 // general one is missing.
+function laneOfCadence(windows, matches) {
+    var general = windows.filter(function(item) { return !item.scoped && matches(item); });
+    if (general.length) return general[0];
+    // A provider can publish only per-model lanes and no general window of the cadence;
+    // Antigravity reports two session windows and no weekly one. Core derives the lane as
+    // the most constrained of those, so do the same rather than leaving the cadence blank
+    // and letting every per-model lane render in its place.
+    var scoped = windows.filter(function(item) { return item.scoped && matches(item); });
+    return scoped.length ? scoped.slice().sort(function(a, b) { return a.remaining - b.remaining; })[0] : null;
+}
+
 function sessionWindow(windows) {
-    return windows.filter(function(item) {
-        return !item.scoped && item.minutes >= 60 && item.minutes <= 720;
-    })[0] || null;
+    return laneOfCadence(windows, function(item) { return item.minutes >= 60 && item.minutes <= 720; });
 }
 
 function weeklyWindow(windows) {
-    return windows.filter(function(item) { return !item.scoped && item.minutes === 10080; })[0] || null;
+    return laneOfCadence(windows, function(item) { return item.minutes === 10080; });
 }
 
 // Compact cadence label: 10080 -> "7D", 300 -> "5H".
@@ -183,7 +192,8 @@ function bindingScope(item, session, weekly) {
     return !general || item.remaining < general.remaining;
 }
 
-function laneSegments(entry, mode) {
+function laneSegments(entry, mode, options) {
+    var settings = options || {};
     var windows = entry.windows || [];
     var session = sessionWindow(windows);
     var weekly = weeklyWindow(windows);
@@ -193,7 +203,7 @@ function laneSegments(entry, mode) {
     // A scoped cap is named by the provider, not by its cadence, because it usually
     // shares one with the general lane it sits beside.
     windows.forEach(function(item) {
-        if (!item.scoped || !bindingScope(item, session, weekly)) return;
+        if (!settings.scopedCaps || !item.scoped || !bindingScope(item, session, weekly)) return;
         // The popup keeps the provider's full title; the bar drops the qualifier it
         // appends to distinguish a scoped cap from the general lane next to it.
         segments.push(item.label.replace(/\s+only$/i, "") + " " + quotaValue(item.remaining, mode) + "%");
@@ -201,7 +211,8 @@ function laneSegments(entry, mode) {
     // Pace belongs to the weekly window, not to whichever lane is most constrained,
     // and it stays last so the quota lanes read together. An unavailable pace gets no
     // segment at all: a dash in the bar reads like data rather than like absence.
-    if (weekly && number(weekly.paceDelta) !== null) segments.push(paceDeltaText(weekly.paceDelta));
+    if (settings.pace !== false && weekly && number(weekly.paceDelta) !== null)
+        segments.push(paceDeltaText(weekly.paceDelta));
     if (segments.length || !windows.length) return segments;
     // A provider reporting neither cadence keeps its first window rather than going blank.
     return [(laneLabel(windows[0].minutes) || windows[0].label) + " " +
@@ -213,17 +224,17 @@ function laneSegments(entry, mode) {
 // separator; a provider with nothing to show keeps the em dash. Every queried
 // provider is shown, because the configured provider list is already the limit
 // the user set; the tray tooltip keeps its own two-provider summary.
-function barSegments(entries, mode) {
+function barSegments(entries, mode, options) {
     return entries.map(function(entry) {
-        var segments = laneSegments(entry, mode);
+        var segments = laneSegments(entry, mode, options);
         return {provider: entry.provider, tag: providerTag(entry.provider),
             text: segments.length ? segments.join(" · ") : "—"};
     });
 }
 
 // Persistent bar label. Absent lanes contribute no text and no separator.
-function barLabel(entries, mode) {
-    var shown = barSegments(entries, mode);
+function barLabel(entries, mode, options) {
+    var shown = barSegments(entries, mode, options);
     return shown.map(function(entry) {
         return (shown.length > 1 ? entry.tag + " " : "") + entry.text;
     }).join("  ·  ");

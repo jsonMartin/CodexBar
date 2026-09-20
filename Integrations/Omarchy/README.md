@@ -25,13 +25,19 @@ The bar shows the session quota, the weekly quota and the weekly pace, as in
 weekly rate and a negative one is a reserve, matching the menu bar on macOS. A
 lane the provider does not report contributes no text and no separator, so a
 weekly-only account reads `7D 61% · +14%`. A weekly window whose pace CodexBar
-cannot compute, such as an exhausted one, reads `7D 0% · —` rather than zero.
+cannot compute, such as an exhausted one, contributes no pace segment at all,
+matching how the native cards hide an unavailable pace. **Show pace** hides it
+everywhere, including here.
 Used or remaining percentages follow the quota preference in Settings.
 
 Providers that report a model-scoped cap alongside their general quota, such as
 Claude's per-model weekly window, contribute an extra lane named by the provider's
 own title. Those lanes follow the standard session, weekly and additional windows,
-so a cadence lookup still resolves the general weekly quota first.
+so a cadence lookup still resolves the general weekly quota first. The bar omits
+them unless **Show scoped caps** is enabled, because most providers that publish
+them restate a general lane; the popup always lists them. A provider that reports
+no general window of a cadence, such as Antigravity's per-model weekly limits,
+still shows that cadence, derived from whichever of its lanes binds hardest.
 
 Each provider is marked by its own logo, recoloured to the bar's foreground so
 themes still apply. A provider whose logo is not installed keeps a short text tag

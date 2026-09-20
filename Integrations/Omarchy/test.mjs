@@ -237,7 +237,7 @@ test('a scoped cap appears in the bar by name, after the weekly lane and before 
         extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
             window: {usedPercent: 93, windowMinutes: 10080}}]},
         pace: {secondary: {deltaPercent: 3}}}]));
-    assert.equal(model.barLabel(rows, 'remaining'), '5H 37% · 7D 61% · Fable 7% · +3%');
+    assert.equal(model.barLabel(rows, 'remaining', {scopedCaps: true}), '5H 37% · 7D 61% · Fable 7% · +3%');
 });
 test('a scoped cap never displaces the general weekly lane or its pace', () => {
     const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
@@ -245,26 +245,30 @@ test('a scoped cap never displaces the general weekly lane or its pace', () => {
         extraRateWindows: [{id: 'scoped', title: 'Fable only',
             window: {usedPercent: 93, windowMinutes: 10080}}]},
         pace: {secondary: {deltaPercent: -8}}}]));
-    assert.equal(model.barLabel(rows, 'remaining'), '7D 61% · Fable 7% · -8%');
+    assert.equal(model.barLabel(rows, 'remaining', {scopedCaps: true}), '7D 61% · Fable 7% · -8%');
 });
-test('a scoped cap on a provider with no weekly lane emits no pace slot', () => {
+test('a provider whose only weekly data is scoped still shows a weekly lane, and no pace slot', () => {
     const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
         extraRateWindows: [{id: 'scoped', title: 'Fable only',
             window: {usedPercent: 93, windowMinutes: 10080}}]}}]));
-    const label = model.barLabel(rows, 'remaining');
-    assert.equal(label, 'Fable 7%');
-    assert.ok(!label.includes('—'));
+    // The cadence is derived from the only lane reporting it, so the quota stays visible
+    // even with scoped caps switched off, and it is not also repeated by name.
+    for (const scopedCaps of [true, false]) {
+        const label = model.barLabel(rows, 'remaining', {scopedCaps});
+        assert.equal(label, '7D 7%');
+        assert.ok(!label.includes('—'));
+    }
 });
 test('a reserve pool is excluded by being less constrained, not by its name', () => {
     const reserve = lanes({secondary: weekly,
         extraRateWindows: [{id: 'codex-weekly-scoped-gpt-reserve', title: 'gpt-reserve only',
             window: {usedPercent: 3, windowMinutes: 10080}}]}, {secondary: {deltaPercent: 3}});
-    assert.equal(model.barLabel(reserve, 'remaining'), '7D 61% · +3%');
+    assert.equal(model.barLabel(reserve, 'remaining', {scopedCaps: true}), '7D 61% · +3%');
     // Same lane, same name, but now the tighter of the two: the rule is the number.
     const drained = lanes({secondary: weekly,
         extraRateWindows: [{id: 'codex-weekly-scoped-gpt-reserve', title: 'gpt-reserve only',
             window: {usedPercent: 98, windowMinutes: 10080}}]}, {secondary: {deltaPercent: 3}});
-    assert.equal(model.barLabel(drained, 'remaining'), '7D 61% · gpt-reserve 2% · +3%');
+    assert.equal(model.barLabel(drained, 'remaining', {scopedCaps: true}), '7D 61% · gpt-reserve 2% · +3%');
 });
 
 test('a scoped cap that merely restates its general lane stays out of the bar', () => {
@@ -275,7 +279,7 @@ test('a scoped cap that merely restates its general lane stays out of the bar', 
             {id: 'g5', title: 'Gemini 5-hour', window: {usedPercent: 100, windowMinutes: 300}},
             {id: 'gw', title: 'Gemini weekly', window: {usedPercent: 4, windowMinutes: 10080}},
             {id: 'cw', title: 'Claude/GPT weekly', window: {usedPercent: 0, windowMinutes: 10080}}]}}]));
-    assert.equal(model.barLabel(mirrored, 'remaining'), '5H 0% · 7D 96%');
+    assert.equal(model.barLabel(mirrored, 'remaining', {scopedCaps: true}), '5H 0% · 7D 96%');
     // The popup still receives every lane the provider reported.
     assert.equal(mirrored[0].windows.length, 5);
 });
@@ -283,5 +287,34 @@ test('a scoped cap tighter than its general lane still earns a bar segment', () 
     const binding = model.rows(JSON.stringify([{provider: 'claude', usage: {
         secondary: {usedPercent: 71, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'},
         extraRateWindows: [{id: 'f', title: 'Fable only', window: {usedPercent: 99, windowMinutes: 10080}}]}}]));
-    assert.equal(model.barLabel(binding, 'remaining'), '7D 29% · Fable 1%');
+    assert.equal(model.barLabel(binding, 'remaining', {scopedCaps: true}), '7D 29% · Fable 1%');
+});
+
+const perModelOnly = {provider: 'antigravity', usage: {
+    primary: {usedPercent: 7, windowMinutes: 300, resetsAt: '2030-01-01T00:00:00Z'},
+    secondary: {usedPercent: 0, windowMinutes: 300, resetsAt: '2030-01-01T00:00:00Z'},
+    extraRateWindows: [
+        {id: 'gw', title: 'Gemini weekly', window: {usedPercent: 6, windowMinutes: 10080}},
+        {id: 'cw', title: 'Claude/GPT weekly', window: {usedPercent: 0, windowMinutes: 10080}}]}};
+
+test('a provider with no general window of a cadence derives one from its tightest per-model lane', () => {
+    const rows = model.rows(JSON.stringify([perModelOnly]));
+    // 94% beats 100%: the lane that actually binds, matching Core's mostConstrained.
+    assert.equal(model.barLabel(rows, 'remaining', {scopedCaps: true}), '5H 93% · 7D 94%');
+    assert.equal(model.barLabel(rows, 'remaining', {scopedCaps: false}), '5H 93% · 7D 94%');
+});
+test('scoped caps are opt-in and never duplicate the lane they were derived into', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        secondary: {usedPercent: 80, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'},
+        extraRateWindows: [{id: 'f', title: 'Fable only', window: {usedPercent: 100, windowMinutes: 10080}}]}}]));
+    assert.equal(model.barLabel(rows, 'remaining', {scopedCaps: false}), '7D 20%');
+    assert.equal(model.barLabel(rows, 'remaining', {scopedCaps: true}), '7D 20% · Fable 0%');
+    // Default with no options behaves as off.
+    assert.equal(model.barLabel(rows, 'remaining'), '7D 20%');
+});
+test('the pace preference controls the bar pace as it controls the native cards', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'codex',
+        usage: {secondary: weekly}, pace: {secondary: {deltaPercent: 14}}}]));
+    assert.equal(model.barLabel(rows, 'remaining', {pace: true}), '7D 61% · +14%');
+    assert.equal(model.barLabel(rows, 'remaining', {pace: false}), '7D 61%');
 });
