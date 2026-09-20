@@ -1,7 +1,17 @@
 // Pure model shared by the QML frontend and offline Node tests.
 function remaining(window) {
     if (!window || typeof window.usedPercent !== "number" || !isFinite(window.usedPercent)) return null;
+    // A provider can describe a window it cannot measure: Zed reports an overdue invoice and
+    // Antigravity a reset-only pool, both carrying usedPercent 100 with usageKnown false, and
+    // Claude emits a synthetic placeholder when the web API returns no session. Core drops
+    // both rather than reading them as quota, and every downstream percentage, meter, label
+    // and notification here depends on that same boundary.
+    if (window.isSyntheticPlaceholder === true) return null;
     return Math.round(Math.max(0, Math.min(100, 100 - window.usedPercent)));
+}
+
+function measured(entry) {
+    return !!entry && entry.usageKnown !== false && remaining(entry.window) !== null;
 }
 
 // Duration name for a reported cadence; empty when the provider omits window metadata.
@@ -33,9 +43,8 @@ function rows(text, showIdentity) {
         // can share the 7-day cadence with the real weekly lane.
         // The cap counts displayed lanes: filtering first keeps a real lane that trails
         // unusable ones instead of spending the budget on entries that render nothing.
-        (Array.isArray(usage.extraRateWindows) ? usage.extraRateWindows : []).filter(function(extra) {
-            return remaining(extra && extra.window) !== null;
-        }).slice(0, 8).forEach(function(extra, index) {
+        (Array.isArray(usage.extraRateWindows) ? usage.extraRateWindows : [])
+            .filter(measured).slice(0, 8).forEach(function(extra, index) {
             var window = extra.window;
             var label = displayText(extra.title, showIdentity).trim() ||
                 cadenceLabel(window.windowMinutes) || "Additional";
@@ -171,7 +180,12 @@ function weeklyWindow(windows) {
 // Compact cadence label: 10080 -> "7D", 300 -> "5H".
 function laneLabel(minutes) {
     if (!minutes || minutes <= 0) return "";
-    if (minutes % 1440 === 0) return (minutes / 1440) + "D";
+    // A billing cycle is a real cadence and rarely a whole number of days: Cursor derives one
+    // from its invoice dates. Name it in days anyway rather than reporting 684H.
+    if (minutes >= 1440) {
+        var days = minutes / 1440;
+        return (days === Math.round(days) ? days : Math.round(days)) + "D";
+    }
     if (minutes % 60 === 0) return (minutes / 60) + "H";
     return minutes + "M";
 }
@@ -187,8 +201,36 @@ function paceDeltaText(delta) {
 // A scoped cap earns bar space only while it binds harder than the general lane of
 // its own cadence. Antigravity mirrors its general lanes per model family, which
 // would otherwise restate the same numbers four times; the popup still lists them.
-function bindingScope(item, session, weekly) {
-    var general = item.minutes === 10080 ? weekly : item.minutes >= 60 && item.minutes <= 720 ? session : null;
+// The tightest general window of each cadence the caller has not already represented,
+// ordered shortest cadence first so the bar reads from most to least immediate.
+function otherCadences(windows, shown) {
+    var covered = shown.filter(Boolean);
+    var best = {}, order = [];
+    windows.forEach(function(item) {
+        if (item.scoped) return;
+        // A provider can report a quota without saying over what period; key those by their
+        // positional name so they still get a lane instead of disappearing.
+        var key = item.minutes ? String(item.minutes) : "named:" + item.label;
+        if (covered.some(function(seen) { return seen === item || (item.minutes && seen.minutes === item.minutes); })) return;
+        if (!best[key]) order.push(key);
+        if (!best[key] || item.remaining < best[key].remaining) best[key] = item;
+    });
+    return order.sort(function(a, b) { return (parseInt(a, 10) || Infinity) - (parseInt(b, 10) || Infinity); })
+        .map(function(key) { return best[key]; });
+}
+
+function tightestGeneral(windows) {
+    return windows.filter(function(item) { return !item.scoped; })
+        .sort(function(a, b) { return a.remaining - b.remaining; })[0] || null;
+}
+
+function bindingScope(item, session, weekly, windows) {
+    // Antigravity's per-model lanes report no cadence at all, so there is no same-cadence lane
+    // to compare them against. Hold them to the provider's tightest general lane instead:
+    // an unused per-model pool says nothing the general lane has not already said.
+    var general = item.minutes === 10080 ? weekly
+        : item.minutes >= 60 && item.minutes <= 720 ? session
+        : tightestGeneral(windows);
     return !general || item.remaining < general.remaining;
 }
 
@@ -200,10 +242,16 @@ function laneSegments(entry, mode, options) {
     var segments = [];
     if (session) segments.push(laneLabel(session.minutes) + " " + quotaValue(session.remaining, mode) + "%");
     if (weekly) segments.push(laneLabel(weekly.minutes) + " " + quotaValue(weekly.remaining, mode) + "%");
+    // A provider's own quota can use neither cadence: Cursor bills on a monthly cycle beside a
+    // weekly allowance. Every cadence it reports itself gets a lane, so the main quota cannot be
+    // dropped, while a second window of a cadence already shown adds nothing.
+    otherCadences(windows, [session, weekly]).forEach(function(item) {
+        segments.push((laneLabel(item.minutes) || item.label) + " " + quotaValue(item.remaining, mode) + "%");
+    });
     // A scoped cap is named by the provider, not by its cadence, because it usually
     // shares one with the general lane it sits beside.
     windows.forEach(function(item) {
-        if (!settings.scopedCaps || !item.scoped || !bindingScope(item, session, weekly)) return;
+        if (!settings.scopedCaps || !item.scoped || !bindingScope(item, session, weekly, windows)) return;
         // The popup keeps the provider's full title; the bar drops the qualifier it
         // appends to distinguish a scoped cap from the general lane next to it.
         segments.push(item.label.replace(/\s+only$/i, "") + " " + quotaValue(item.remaining, mode) + "%");
@@ -213,10 +261,7 @@ function laneSegments(entry, mode, options) {
     // segment at all: a dash in the bar reads like data rather than like absence.
     if (settings.pace !== false && weekly && number(weekly.paceDelta) !== null)
         segments.push(paceDeltaText(weekly.paceDelta));
-    if (segments.length || !windows.length) return segments;
-    // A provider reporting neither cadence keeps its first window rather than going blank.
-    return [(laneLabel(windows[0].minutes) || windows[0].label) + " " +
-        quotaValue(windows[0].remaining, mode) + "%"];
+    return segments;
 }
 
 // One entry per shown provider: icon adapters draw `tag` (or a logo) before `text`,

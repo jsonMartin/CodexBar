@@ -318,3 +318,46 @@ test('the pace preference controls the bar pace as it controls the native cards'
     assert.equal(model.barLabel(rows, 'remaining', {pace: true}), '7D 61% · +14%');
     assert.equal(model.barLabel(rows, 'remaining', {pace: false}), '7D 61%');
 });
+
+test('a window the provider cannot measure never becomes a quota', () => {
+    // Zed reports an overdue invoice and Antigravity a reset-only pool this way.
+    const unmeasured = model.rows(JSON.stringify([{provider: 'zed', usage: {
+        secondary: {usedPercent: 10, windowMinutes: 10080},
+        extraRateWindows: [{id: 'b', title: 'Billing', usageKnown: false,
+            window: {usedPercent: 100, windowMinutes: 10080}}]}}]));
+    assert.equal(model.barLabel(unmeasured, 'remaining', {scopedCaps: true}), '7D 90%');
+    assert.equal(unmeasured[0].windows.length, 1, 'the unmeasured lane must not reach the popup either');
+});
+test('a synthetic placeholder session is not a full session', () => {
+    // Claude emits this when its web API reports no active five-hour window.
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: {usedPercent: 0, windowMinutes: 300, isSyntheticPlaceholder: true},
+        secondary: {usedPercent: 39, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'}},
+        pace: {secondary: {deltaPercent: 14}}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '7D 61% · +14%');
+});
+test('a quota on its own cadence survives a scoped allowance beside it', () => {
+    // Cursor bills monthly and reports a separate weekly Grok Bot allowance.
+    const rows = model.rows(JSON.stringify([{provider: 'cursor', usage: {
+        primary: {usedPercent: 25, windowMinutes: 43200},
+        extraRateWindows: [{id: 'g', title: 'Grok Bot', window: {usedPercent: 50, windowMinutes: 10080}}]}}]));
+    const label = model.barLabel(rows, 'remaining', {scopedCaps: true});
+    assert.ok(label.includes('30D 75%'), `monthly quota missing from ${label}`);
+});
+test('a cadence-less scoped lane must out-bind the provider before it earns space', () => {
+    // Antigravity's per-model quotas report no windowMinutes at all.
+    const entry = extras => ({provider: 'antigravity', usage: {
+        primary: {usedPercent: 10, windowMinutes: 300}, secondary: {usedPercent: 20, windowMinutes: 10080},
+        extraRateWindows: extras}});
+    const idle = model.rows(JSON.stringify([entry([
+        {id: 'a', title: 'Gemini 2.5 Flash', window: {usedPercent: 0, windowMinutes: null}}])]));
+    assert.equal(model.barLabel(idle, 'remaining', {scopedCaps: true}), '5H 90% · 7D 80%');
+    const binding = model.rows(JSON.stringify([entry([
+        {id: 'b', title: 'Gemini 2.5 Pro', window: {usedPercent: 95, windowMinutes: null}}])]));
+    assert.equal(model.barLabel(binding, 'remaining', {scopedCaps: true}), '5H 90% · 7D 80% · Gemini 2.5 Pro 5%');
+});
+test('a billing cycle that is not whole days is still named in days', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'cursor',
+        usage: {primary: {usedPercent: 25, windowMinutes: 41040}}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '29D 75%');
+});
