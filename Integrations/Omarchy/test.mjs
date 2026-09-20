@@ -255,15 +255,16 @@ test('a scoped cap on a provider with no weekly lane emits no pace slot', () => 
     assert.equal(label, 'Fable 7%');
     assert.ok(!label.includes('—'));
 });
-test('backup or reserve scoped caps get no bar lane, while real scoped caps keep theirs', () => {
+test('a reserve pool is excluded by being less constrained, not by its name', () => {
     const reserve = lanes({secondary: weekly,
         extraRateWindows: [{id: 'codex-weekly-scoped-gpt-reserve', title: 'gpt-reserve only',
             window: {usedPercent: 3, windowMinutes: 10080}}]}, {secondary: {deltaPercent: 3}});
     assert.equal(model.barLabel(reserve, 'remaining'), '7D 61% · +3%');
-    const fable = lanes({secondary: weekly,
-        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
-            window: {usedPercent: 93, windowMinutes: 10080}}]}, null);
-    assert.equal(model.barLabel(fable, 'remaining'), '7D 61% · Fable 7%');
+    // Same lane, same name, but now the tighter of the two: the rule is the number.
+    const drained = lanes({secondary: weekly,
+        extraRateWindows: [{id: 'codex-weekly-scoped-gpt-reserve', title: 'gpt-reserve only',
+            window: {usedPercent: 98, windowMinutes: 10080}}]}, {secondary: {deltaPercent: 3}});
+    assert.equal(model.barLabel(drained, 'remaining'), '7D 61% · gpt-reserve 2% · +3%');
 });
 
 test('a scoped cap that merely restates its general lane stays out of the bar', () => {

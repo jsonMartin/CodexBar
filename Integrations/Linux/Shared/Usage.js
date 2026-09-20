@@ -193,9 +193,6 @@ function laneSegments(entry, mode) {
     // A scoped cap is named by the provider, not by its cadence, because it usually
     // shares one with the general lane it sits beside.
     windows.forEach(function(item) {
-        // Backup/reserve pools (codex's gpt-reserve) are not spendable quota and get no
-        // bar lane; a provider's real scoped cap (claude's Fable) stays.
-        if (item.scoped && /reserve|backup/i.test(item.key + " " + item.label)) return;
         if (!item.scoped || !bindingScope(item, session, weekly)) return;
         // The popup keeps the provider's full title; the bar drops the qualifier it
         // appends to distinguish a scoped cap from the general lane next to it.
