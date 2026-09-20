@@ -149,8 +149,11 @@ function providerTag(provider) {
 
 function summary(entries, mode) {
     var label = entries.slice(0, 2).map(function(entry) {
+        // Report the lane that binds, so the tray tooltip cannot claim 93% while the bar
+        // shows the same provider exhausted at 0%.
+        var lane = tightest(entry.windows);
         return providerTag(entry.provider) + " " +
-            (entry.windows.length ? quotaValue(entry.windows[0].remaining, mode) + "%" : "—");
+            (lane ? quotaValue(lane.remaining, mode) + "%" : "—");
     }).join("  ·  ");
     return label + (entries.length > 2 ? "  +" + (entries.length - 2) : "");
 }

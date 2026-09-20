@@ -393,3 +393,18 @@ test('two cadence-less lanes keep a stable order rather than an engine-defined o
     for (let i = 0; i < 20; i += 1) assert.equal(model.barLabel(rows, 'remaining'), first);
     assert.equal(first, 'Session 90% · Weekly 80%');
 });
+
+test('the tray summary and the bar agree about which lane binds', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'antigravity', usage: {
+        primary: {usedPercent: 7, windowMinutes: 300}, secondary: {usedPercent: 100, windowMinutes: 300}}}]));
+    assert.equal(model.summary(rows, 'remaining'), 'antigravity 0%');
+    assert.ok(model.barLabel(rows, 'remaining').includes('0%'));
+});
+test('an unmeasurable window reaches neither the notifications nor the copied summary', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'zed', usage: {
+        secondary: {usedPercent: 10, windowMinutes: 10080},
+        extraRateWindows: [{id: 'b', title: 'Billing', usageKnown: false,
+            window: {usedPercent: 100, windowMinutes: 10080}}]}}]));
+    assert.equal(rows[0].windows.length, 1);
+    assert.ok(!JSON.stringify(rows).includes('Billing'));
+});

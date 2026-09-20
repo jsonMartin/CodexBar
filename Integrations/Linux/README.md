@@ -229,8 +229,12 @@ apply when starting a new instance. The private, same-user local socket lives at
 `$XDG_RUNTIME_DIR/codexbar-linux/desktop.sock`; requests and replies are newline
 terminated JSON. Snapshot schema version 1 includes compact provider windows,
 summary, bar label, update time, busy/stale/error state, and spending availability.
-Each window carries its cadence in minutes and, when the provider reports one, the
-signed pace delta in percentage points. It excludes account identity, CLI paths, and credential configuration.
+Each window carries its cadence in minutes, a `scoped` flag when the provider
+reported it beside a general quota rather than as one, and, when the provider
+reports one, the signed pace delta in percentage points. `barEntries` gives the
+same label split per provider, as `{provider, tag, text}`, for adapters that draw
+their own provider marker; `barLabel` is the joined form and the fallback.
+Window labels are redacted for identity regardless of display preferences. It excludes account identity, CLI paths, and credential configuration.
 It includes display values and reset text for adapters. Adapters should check `schemaVersion`, tolerate
 unknown fields, and treat a missing backend as unavailable.
 
