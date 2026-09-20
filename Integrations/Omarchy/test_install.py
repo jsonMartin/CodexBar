@@ -73,8 +73,48 @@ class InstallTests(unittest.TestCase):
             # Rewriting a managed file must not turn its glyphs into escapes and churn the diff.
             self.assertIn('\uf017', tracked.read_text())
             self.assertNotIn('\\uf017', tracked.read_text())
-            # The installer's own payload still replaces whatever occupies its path.
+            # The installer's own payload replaces whatever occupies its path, so this has to
+            # start as a link for the assertion to mean anything.
             self.assertFalse((home / '.local/bin/codexbar-linux').is_symlink())
+            self.assertFalse((config / 'omarchy/plugins/steipete.codexbar').is_symlink())
+
+    def test_installer_payload_paths_replace_links_instead_of_writing_through_them(self):
+        with tempfile.TemporaryDirectory(prefix='codexbar payload ') as temporary:
+            home = Path(temporary)
+            config, data = home / 'config', home / 'data'
+            decoy = home / 'decoy'
+            decoy.mkdir()
+            binary_target = decoy / 'codexbar-linux'
+            binary_target.write_text('original')
+            (home / '.local/bin').mkdir(parents=True)
+            (home / '.local/bin/codexbar-linux').symlink_to(binary_target)
+            plugin_target = decoy / 'plugin'
+            plugin_target.mkdir()
+            (config / 'omarchy/plugins').mkdir(parents=True)
+            (config / 'omarchy/plugins/steipete.codexbar').symlink_to(plugin_target)
+            (config / 'omarchy').mkdir(parents=True, exist_ok=True)
+            (config / 'omarchy/shell.json').write_text('{}')
+            script = Path(__file__).resolve().parents[1] / 'Linux/install.py'
+            environment = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(config), XDG_DATA_HOME=str(data))
+            subprocess.run(['python3', str(script), '--binary', '/usr/bin/true', '--cli', '/usr/bin/true',
+                            '--omarchy'], env=environment, check=True, capture_output=True)
+            self.assertFalse((home / '.local/bin/codexbar-linux').is_symlink())
+            self.assertEqual(binary_target.read_text(), 'original')
+            self.assertFalse((config / 'omarchy/plugins/steipete.codexbar').is_symlink())
+            self.assertEqual(list(plugin_target.iterdir()), [])
+
+    def test_a_broken_plugin_link_does_not_abort_the_install(self):
+        with tempfile.TemporaryDirectory(prefix='codexbar broken ') as temporary:
+            home = Path(temporary)
+            config, data = home / 'config', home / 'data'
+            (config / 'omarchy/plugins').mkdir(parents=True)
+            (config / 'omarchy/plugins/steipete.codexbar').symlink_to(home / 'gone')
+            (config / 'omarchy/shell.json').write_text('{}')
+            script = Path(__file__).resolve().parents[1] / 'Linux/install.py'
+            environment = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(config), XDG_DATA_HOME=str(data))
+            subprocess.run(['python3', str(script), '--binary', '/usr/bin/true', '--cli', '/usr/bin/true',
+                            '--omarchy'], env=environment, check=True, capture_output=True)
+            self.assertTrue((config / 'omarchy/plugins/steipete.codexbar/manifest.json').is_file())
 
     def test_standalone_install_does_not_require_omarchy(self):
         with tempfile.TemporaryDirectory() as temporary:
