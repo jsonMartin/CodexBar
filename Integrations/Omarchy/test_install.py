@@ -73,10 +73,7 @@ class InstallTests(unittest.TestCase):
             # Rewriting a managed file must not turn its glyphs into escapes and churn the diff.
             self.assertIn('\uf017', tracked.read_text())
             self.assertNotIn('\\uf017', tracked.read_text())
-            # The installer's own payload replaces whatever occupies its path, so this has to
-            # start as a link for the assertion to mean anything.
-            self.assertFalse((home / '.local/bin/codexbar-linux').is_symlink())
-            self.assertFalse((config / 'omarchy/plugins/steipete.codexbar').is_symlink())
+            # Payload-path behaviour is asserted in its own test, which starts from real links.
 
     def test_installer_payload_paths_replace_links_instead_of_writing_through_them(self):
         with tempfile.TemporaryDirectory(prefix='codexbar payload ') as temporary:

@@ -201,12 +201,14 @@ test('an extra rate window without a title still renders a duration label', () =
     const row = model.rows(JSON.stringify([entry]))[0];
     assert.deepEqual([...row.windows.map(window => window.label)], ['7 day', '5 hour', 'Additional']);
 });
-test('extra rate window titles redact emails unless identity is explicitly enabled', () => {
+test('extra rate window titles are redacted even when identity display is enabled', () => {
     const entry = {provider: 'claude', usage: {extraRateWindows: [
         {id: 'scoped', title: 'Fable (private@example.com)', window: {usedPercent: 93, windowMinutes: 10080}}]}};
     const input = JSON.stringify([entry]);
+    // These labels are exported over IPC, whose contract excludes account identity
+    // unconditionally, so the display preference must not be able to widen it.
     assert.equal(model.rows(input)[0].windows[0].label, 'Fable [hidden email]');
-    assert.equal(model.rows(input, true)[0].windows[0].label, 'Fable (private@example.com)');
+    assert.equal(model.rows(input, true)[0].windows[0].label, 'Fable [hidden email]');
 });
 test('extras without a usable window payload are skipped', () => {
     const entry = {provider: 'claude', usage: {extraRateWindows: [
@@ -360,4 +362,34 @@ test('a billing cycle that is not whole days is still named in days', () => {
     const rows = model.rows(JSON.stringify([{provider: 'cursor',
         usage: {primary: {usedPercent: 25, windowMinutes: 41040}}}]));
     assert.equal(model.barLabel(rows, 'remaining'), '29D 75%');
+});
+
+test('a cadence resolves to the pool that binds hardest, not the one listed first', () => {
+    // Antigravity reports one pool per model family at the same cadence.
+    const rows = model.rows(JSON.stringify([{provider: 'antigravity', usage: {
+        primary: {usedPercent: 7, windowMinutes: 300}, secondary: {usedPercent: 100, windowMinutes: 300}}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '5H 0%');
+});
+test("a provider whose whole quota arrives as an extra window still gets a lane", () => {
+    // Kimi delivers a subscription-only account's pool through extraRateWindows.
+    const rows = model.rows(JSON.stringify([{provider: 'kimi', usage: {
+        extraRateWindows: [{id: 'kimi-monthly', title: 'Total usage',
+            window: {usedPercent: 80, windowMinutes: 43200}}]}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '30D 20%');
+    assert.equal(model.barLabel(rows, 'remaining', {scopedCaps: false}), '30D 20%');
+});
+test('windows sharing a duration are distinct quotas, and the provider lists its own first', () => {
+    // Cursor bills total, Auto/Composer and API usage over one cycle.
+    const rows = model.rows(JSON.stringify([{provider: 'cursor', usage: {
+        primary: {usedPercent: 25, windowMinutes: 43200},
+        secondary: {usedPercent: 90, windowMinutes: 43200},
+        tertiary: {usedPercent: 10, windowMinutes: 43200}}}]));
+    assert.equal(model.barLabel(rows, 'remaining'), '30D 75%');
+});
+test('two cadence-less lanes keep a stable order rather than an engine-defined one', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'custom', usage: {
+        primary: {usedPercent: 10}, secondary: {usedPercent: 20}}}]));
+    const first = model.barLabel(rows, 'remaining');
+    for (let i = 0; i < 20; i += 1) assert.equal(model.barLabel(rows, 'remaining'), first);
+    assert.equal(first, 'Session 90% · Weekly 80%');
 });

@@ -16,7 +16,7 @@ function measured(entry) {
 
 // Duration name for a reported cadence; empty when the provider omits window metadata.
 function cadenceLabel(minutes) {
-    if (minutes >= 1440) return (minutes / 1440) + " day";
+    if (minutes >= 1440) return Math.round(minutes / 1440) + " day";
     return minutes > 0 ? (minutes / 60) + " hour" : "";
 }
 
@@ -46,7 +46,9 @@ function rows(text, showIdentity) {
         (Array.isArray(usage.extraRateWindows) ? usage.extraRateWindows : [])
             .filter(measured).slice(0, 8).forEach(function(extra, index) {
             var window = extra.window;
-            var label = displayText(extra.title, showIdentity).trim() ||
+            // The snapshot contract excludes account identity unconditionally, so a provider
+            // supplied title is redacted here whatever the display preference says.
+            var label = displayText(extra.title, false).trim() ||
                 cadenceLabel(window.windowMinutes) || "Additional";
             windows.push({key: String(extra.id || "extra-" + index), label: label,
                 minutes: number(window.windowMinutes), remaining: remaining(window),
@@ -158,15 +160,21 @@ function summary(entries, mode) {
 // A scoped cap is excluded: it is rendered by name, and it usually shares the general
 // lane's cadence, so accepting it here would show the same lane twice whenever the
 // general one is missing.
+function tightest(windows) {
+    return windows.slice().sort(function(a, b) { return a.remaining - b.remaining; })[0] || null;
+}
+
 function laneOfCadence(windows, matches) {
     var general = windows.filter(function(item) { return !item.scoped && matches(item); });
-    if (general.length) return general[0];
+    // Antigravity reports one pool per model family at the same cadence, and Core resolves the
+    // lane to whichever binds hardest. Taking the first would hide an exhausted family behind
+    // an idle one.
+    if (general.length) return tightest(general);
     // A provider can publish only per-model lanes and no general window of the cadence;
     // Antigravity reports two session windows and no weekly one. Core derives the lane as
     // the most constrained of those, so do the same rather than leaving the cadence blank
     // and letting every per-model lane render in its place.
-    var scoped = windows.filter(function(item) { return item.scoped && matches(item); });
-    return scoped.length ? scoped.slice().sort(function(a, b) { return a.remaining - b.remaining; })[0] : null;
+    return tightest(windows.filter(function(item) { return item.scoped && matches(item); }));
 }
 
 function sessionWindow(windows) {
@@ -183,8 +191,7 @@ function laneLabel(minutes) {
     // A billing cycle is a real cadence and rarely a whole number of days: Cursor derives one
     // from its invoice dates. Name it in days anyway rather than reporting 684H.
     if (minutes >= 1440) {
-        var days = minutes / 1440;
-        return (days === Math.round(days) ? days : Math.round(days)) + "D";
+        return Math.round(minutes / 1440) + "D";
     }
     if (minutes % 60 === 0) return (minutes / 60) + "H";
     return minutes + "M";
@@ -206,17 +213,32 @@ function paceDeltaText(delta) {
 function otherCadences(windows, shown) {
     var covered = shown.filter(Boolean);
     var best = {}, order = [];
+    var claimed = {};
+    windows.forEach(function(item) { if (!item.scoped && item.minutes) claimed[item.minutes] = true; });
     windows.forEach(function(item) {
-        if (item.scoped) return;
+        // An extra window is not always a sub-cap. Kimi delivers a subscription-only account's
+        // whole quota this way, so let one stand in for a cadence no positional window claims;
+        // where a positional window does claim it, the extra stays a scoped cap.
+        if (item.scoped && (!item.minutes || claimed[item.minutes])) return;
         // A provider can report a quota without saying over what period; key those by their
         // positional name so they still get a lane instead of disappearing.
         var key = item.minutes ? String(item.minutes) : "named:" + item.label;
         if (covered.some(function(seen) { return seen === item || (item.minutes && seen.minutes === item.minutes); })) return;
-        if (!best[key]) order.push(key);
-        if (!best[key] || item.remaining < best[key].remaining) best[key] = item;
+        // Same duration does not make two windows the same quota: Cursor bills its total, its
+        // Auto/Composer usage and its API usage over one cycle. The provider lists its own
+        // headline quota first, so keep that rather than whichever subquota is tightest.
+        if (best[key]) return;
+        order.push(key);
+        best[key] = item;
     });
-    return order.sort(function(a, b) { return (parseInt(a, 10) || Infinity) - (parseInt(b, 10) || Infinity); })
-        .map(function(key) { return best[key]; });
+    // A cadence-less lane sorts last, and two of them keep the provider's own order.
+    return order.sort(function(a, b) {
+        var left = parseInt(a, 10), right = parseInt(b, 10);
+        if (isNaN(left) && isNaN(right)) return order.indexOf(a) - order.indexOf(b);
+        if (isNaN(left)) return 1;
+        if (isNaN(right)) return -1;
+        return left - right;
+    }).map(function(key) { return best[key]; });
 }
 
 function tightestGeneral(windows) {
