@@ -29,6 +29,7 @@ ApplicationWindow {
         reset.currentIndex = reset.model.indexOf(s.resetDisplay);
         trayStyle.currentIndex = trayStyle.model.indexOf(s.trayStyle);
         theme.checked = s.followOmarchyTheme; pace.checked = s.showPace; warnings.checked = s.warningColors;
+        scopedCaps.checked = s.showScopedCaps;
         refreshOnOpen.checked = s.refreshOnOpen;
         tray.checked = s.showTray; executable.text = s.executable; feedback = "";
     }
@@ -165,6 +166,7 @@ ApplicationWindow {
                         }
                         Option { id: theme; text: "Follow Omarchy theme colors" }
                         Option { id: pace; text: "Show pace" }
+                        Option { id: scopedCaps; text: "Show per-model caps in the bar" }
                         Option { id: warnings; text: "Highlight low quota" }
                     }
                 }
@@ -191,7 +193,8 @@ ApplicationWindow {
                         showCosts: costs.checked, showStatus: status.checked, notifications: notices.checked,
                         notifyThreshold: threshold.value, refreshSeconds: interval.value,
                         providerOrder: window.providerOrder, quotaDisplay: quota.currentText, resetDisplay: reset.currentText,
-                        followOmarchyTheme: theme.checked, showPace: pace.checked, warningColors: warnings.checked, trayStyle: trayStyle.currentText,
+                        followOmarchyTheme: theme.checked, showPace: pace.checked, showScopedCaps: scopedCaps.checked,
+                        warningColors: warnings.checked, trayStyle: trayStyle.currentText,
                         refreshOnOpen: refreshOnOpen.checked, showTray: tray.checked, executable: executable.text.trim()})) window.feedback = "Settings saved";
                 }
             }
