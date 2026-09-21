@@ -30,16 +30,17 @@ private slots:
         QVERIFY(!controller.accountAction("codex;anything", "login"));
         QVERIFY(!controller.accountAction("codex", "unrecognized"));
         QVERIFY(!QFile::exists(temporary.filePath("arguments")));
+        // The shell's redirect creates the log before printf fills it, so wait for the contents,
+        // not just the file.
+        const auto logged = [&] {
+            QFile file(temporary.filePath("arguments"));
+            return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+        };
         QVERIFY(controller.accountAction("claude", "login"));
-        QTRY_VERIFY(QFile::exists(temporary.filePath("arguments")));
-        QFile file(temporary.filePath("arguments"));
-        QVERIFY(file.open(QIODevice::ReadOnly));
-        QCOMPARE(file.readAll(), QByteArray("--hold\n--\n") + temporary.filePath("claude").toUtf8() + "\nauth\nlogin\n");
-        file.close(); file.remove();
+        QTRY_COMPARE(logged(), QByteArray("--hold\n--\n") + temporary.filePath("claude").toUtf8() + "\nauth\nlogin\n");
+        QVERIFY(QFile::remove(temporary.filePath("arguments")));
         QVERIFY(controller.accountAction("codex", "logout"));
-        QTRY_VERIFY(QFile::exists(temporary.filePath("arguments")));
-        QVERIFY(file.open(QIODevice::ReadOnly));
-        QCOMPARE(file.readAll(), QByteArray("--hold\n--\n") + temporary.filePath("codex").toUtf8() + "\nlogout\n");
+        QTRY_COMPARE(logged(), QByteArray("--hold\n--\n") + temporary.filePath("codex").toUtf8() + "\nlogout\n");
         qputenv("PATH", originalPath);
     }
 };
