@@ -5,6 +5,8 @@
 ### Fixed
 
 - Claude/Vertex costs: isolate menu and Usage & Spend scan caches, avoiding repeated full rescans and preserving window-specific duplicate totals after upgrades (#3769). Thanks @postoso!
+- Linux installation: preserve managed configuration symlinks and UTF-8 glyphs across reinstalls, and recover dangling Omarchy adapter links (#3784). Thanks @jsonMartin!
+- Linux packaging: include executable contents when the selected binary is a symlink, keeping archives self-contained (#3784).
 
 ## 0.63.0 — 2026-09-20
 
