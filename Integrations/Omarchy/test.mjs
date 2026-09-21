@@ -152,3 +152,45 @@ test('extras without stable identifiers cannot borrow another notification ident
     ]}}]))[0].windows;
     assert.deepEqual([...windows.map(window => window.key)], ['extra:0']);
 });
+
+const pool = (usedPercent, windowMinutes, resetsAt) => ({usedPercent, windowMinutes, resetsAt});
+const quotaSummary = (id, title, window) => ({id: 'antigravity-quota-summary-' + id, title, usageKnown: true, window});
+
+test('a pool reported as a quota summary is listed once, in its representative slot', () => {
+    const geminiWeekly = pool(7, 10080, '2026-09-23T00:00:00Z');
+    const claudeSession = pool(0, 300, '2026-09-21T01:00:00Z');
+    const [row] = model.rows(JSON.stringify([{provider: 'antigravity', usage: {
+        primary: geminiWeekly, secondary: claudeSession, extraRateWindows: [
+            quotaSummary('gemini-5h', 'Gemini 5-hour', pool(3, 300, '2026-09-20T23:00:00Z')),
+            quotaSummary('gemini-weekly', 'Gemini weekly', geminiWeekly),
+            quotaSummary('claude-5h', 'Claude/GPT 5-hour', claudeSession),
+            quotaSummary('claude-weekly', 'Claude/GPT weekly', pool(0, 10080, '2026-09-27T00:00:00Z'))]}}]));
+    assert.deepEqual([...row.windows.map(window => window.key + ' ' + window.label + ' ' + window.remaining)], [
+        'extra:antigravity-quota-summary-gemini-weekly Gemini weekly 93',
+        'extra:antigravity-quota-summary-claude-5h Claude/GPT 5-hour 100',
+        'extra:antigravity-quota-summary-gemini-5h Gemini 5-hour 97',
+        'extra:antigravity-quota-summary-claude-weekly Claude/GPT weekly 100']);
+});
+
+test('family representatives still lead, so the summary and tray report the binding pools', () => {
+    const geminiWeekly = pool(95, 10080, '2026-09-23T00:00:00Z');
+    const claudeSession = pool(100, 300, '2026-09-21T01:00:00Z');
+    const rows = model.rows(JSON.stringify([{provider: 'antigravity', usage: {
+        primary: geminiWeekly, secondary: claudeSession, extraRateWindows: [
+            quotaSummary('gemini-5h', 'Gemini 5-hour', pool(0, 300, '2026-09-20T23:00:00Z')),
+            quotaSummary('gemini-weekly', 'Gemini weekly', geminiWeekly),
+            quotaSummary('claude-5h', 'Claude/GPT 5-hour', claudeSession)]}}]));
+    assert.equal(model.summary(rows, 'remaining'), 'antigravity 5%');
+    assert.deepEqual([...rows[0].windows.slice(0, 2).map(window => window.label + ' ' + window.remaining)],
+        ['Gemini weekly 5', 'Claude/GPT 5-hour 0']);
+});
+
+test('a representative listed beyond the extra limit is never hidden', () => {
+    const exhausted = pool(100, 300, '2026-09-21T01:00:00Z');
+    const idle = Array.from({length: 8}, (_, index) =>
+        quotaSummary('idle-' + index, 'Idle ' + index, pool(5, 300, '2026-09-21T0' + index + ':30:00Z')));
+    const [row] = model.rows(JSON.stringify([{provider: 'antigravity', usage: {
+        primary: exhausted, extraRateWindows: [...idle, quotaSummary('gemini-5h', 'Gemini 5-hour', exhausted)]}}]));
+    assert.equal(row.windows[0].label + ' ' + row.windows[0].remaining, 'Gemini 5-hour 0');
+    assert.equal(row.windows.length, 9);
+});
