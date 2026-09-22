@@ -457,15 +457,27 @@ test('a provider whose only weekly data is scoped still shows a weekly lane, and
 });
 
 test('a reserve pool is excluded by being less constrained, not by its name', () => {
-    const reserve = lanes({secondary: weekly,
-        extraRateWindows: [{id: 'codex-weekly-scoped-gpt-reserve', title: 'gpt-reserve only',
-            window: {usedPercent: 3, windowMinutes: 10080}}]}, {secondary: {deltaPercent: 3}});
-    assert.equal(detailedLabel(reserve, 'remaining', {scopedCaps: true}), '7D 61% · +3%');
+    const pool = used => model.rows(JSON.stringify([{provider: 'custom', usage: {secondary: weekly,
+        extraRateWindows: [{id: 'reserve', title: 'Reserve only', window: {usedPercent: used, windowMinutes: 10080}}]},
+        pace: {secondary: {deltaPercent: 3}}}]));
+    assert.equal(detailedLabel(pool(3), 'remaining', {scopedCaps: true}), '7D 61% · +3%');
     // Same lane, same name, but now the tighter of the two: the rule is the number.
-    const drained = lanes({secondary: weekly,
-        extraRateWindows: [{id: 'codex-weekly-scoped-gpt-reserve', title: 'gpt-reserve only',
-            window: {usedPercent: 98, windowMinutes: 10080}}]}, {secondary: {deltaPercent: 3}});
-    assert.equal(detailedLabel(drained, 'remaining', {scopedCaps: true}), '7D 61% · gpt-reserve 2% · +3%');
+    assert.equal(detailedLabel(pool(98), 'remaining', {scopedCaps: true}), '7D 61% · Reserve 2% · +3%');
+});
+
+test("Codex's per-model limits show whether they are tighter, looser or level with the lane", () => {
+    const spark = (fiveHour, week) => lanes({primary: session, secondary: weekly, extraRateWindows: [
+        {id: 'codex-spark', title: 'Codex Spark 5-hour', window: {usedPercent: fiveHour, windowMinutes: 300}},
+        {id: 'codex-spark-weekly', title: 'Codex Spark Weekly', window: {usedPercent: week, windowMinutes: 10080}}]});
+    assert.equal(detailedLabel(spark(63, 39), 'remaining', {scopedCaps: true}),
+        '5H 37% · 7D 61% · Codex Spark 5-hour 37% · Codex Spark Weekly 61%');
+    assert.equal(detailedLabel(spark(10, 90), 'remaining', {scopedCaps: true}),
+        '5H 37% · 7D 61% · Codex Spark 5-hour 90% · Codex Spark Weekly 10%');
+    assert.equal(detailedLabel(spark(63, 39), 'remaining'), '5H 37% · 7D 61%');
+    // The prefix belongs to Codex: another provider's look-alike id keeps the tightness rule.
+    const other = model.rows(JSON.stringify([{provider: 'custom', usage: {secondary: weekly, extraRateWindows: [
+        {id: 'codex-spark-weekly', title: 'Look-alike', window: {usedPercent: 39, windowMinutes: 10080}}]}}]));
+    assert.equal(detailedLabel(other, 'remaining', {scopedCaps: true}), '7D 61%');
 });
 
 test('a scoped cap that merely restates its general lane stays out of the bar', () => {
