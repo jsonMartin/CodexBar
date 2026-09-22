@@ -629,8 +629,23 @@ test('a general quota that merely coincides with a scoped cap is not replaced by
                 window: {usedPercent: 93, windowMinutes: 10080}}]},
         pace: {secondary: {deltaPercent: -8}}}]));
     assert.equal(detailedLabel(rows, 'remaining'), '7D 29% · -8%');
-    assert.equal(detailedLabel(rows, 'remaining', {scopedCaps: true}), '7D 29% · Nova 7% · -8%');
+    assert.equal(detailedLabel(rows, 'remaining', {scopedCaps: true}), '7D 29% · Opus 29% · Nova 7% · -8%');
     assert.equal(model.summary(rows, 'remaining'), 'CL 29%');
+});
+
+test("Claude's per-model cap shows when asked for, even while it reads the same as the week", () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: session, secondary: {usedPercent: 3, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'},
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 3, windowMinutes: 10080}}]}}]));
+    assert.equal(compactLabel(rows, 'remaining'), '37%');
+    assert.equal(compactLabel(rows, 'remaining', {scopedCaps: true}), '37% · Fable 97%');
+    assert.equal(detailedLabel(rows, 'remaining', {scopedCaps: true}), '5H 37% · 7D 97% · Fable 97%');
+    // Only when the cap is the provider's sole weekly data is it already on show as the lane.
+    const only = model.rows(JSON.stringify([{provider: 'claude', usage: {extraRateWindows: [
+        {id: 'claude-weekly-scoped-fable', title: 'Fable only', window: {usedPercent: 3, windowMinutes: 10080}}]}}]));
+    assert.equal(compactLabel(only, 'remaining', {scopedCaps: true}), '97%');
+    assert.equal(detailedLabel(only, 'remaining', {scopedCaps: true}), '7D 97%');
 });
 
 test("a general lane absent from the extras is not replaced by a cap scoped beneath it", () => {

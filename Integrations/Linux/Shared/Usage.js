@@ -295,7 +295,11 @@ function laneSegments(entry, mode, options) {
     // with the general lane beside it. The bar drops the qualifier the provider appends.
     windows.forEach(function(item) {
         if (!settings.scopedCaps || !item.scoped || rendered.indexOf(item) !== -1) return;
-        if (!bindingScope(item, session, weekly, windows)) return;
+        // Claude's per-model weekly cap, such as Fable, is its own limit even while it reads the
+        // same as the week, and the macOS menu bar shows it on the same id prefix. Other extras
+        // restate a lane often enough (Antigravity's family pools) that they must out-bind it.
+        if (item.key.indexOf("extra:claude-weekly-scoped-") !== 0 && !bindingScope(item, session, weekly, windows))
+            return;
         segments.push(item.label.replace(/\s+only$/i, "") + " " + quotaValue(item.remaining, mode) + "%");
     });
     // Pace belongs to the weekly window, not to whichever lane is most constrained, and it stays

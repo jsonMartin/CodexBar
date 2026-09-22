@@ -54,8 +54,10 @@ contributes no text and no separator, so a weekly-only account reads
 than a placeholder. **Show pace** hides the pace on its own.
 
 **Show per-model caps in the bar** adds a cap a provider scopes to one model,
-such as Claude's Fable-only weekly window, named by the provider's own title and
-shown only while it binds harder than the general lane beside it.
+named by the provider's own title. Claude's per-model weekly cap, such as the
+Fable-only window, always shows, as it does in the macOS menu bar. Other
+per-model lanes, such as Antigravity's model pools, show only while they bind
+harder than the general lane beside them, because they often repeat it.
 
 **Providers in the bar** sets how many providers appear, two by default, and
 `0` shows every one. Four providers each showing a session lane, a weekly lane
