@@ -394,6 +394,10 @@ function barSegments(entries, mode, options) {
     if (now === null) now = Date.now();
     var hot = settings.heat === true;
     return (limit > 0 ? entries.slice(0, limit) : entries).map(function(entry) {
+            // A spent week locks the provider out until its reset, whatever the other lanes say; the
+            // adapter bolds that reset where the weekly lane already shows it.
+            var weekly = weeklyWindow(entry.windows || []);
+            var exhausted = !!weekly && weekly.remaining === 0;
             var segments = laneSegments(entry, mode, options, now);
             // The tooltip line spells out what a warm color only gestures at, and ends with the
             // reset the pace is measured against.
@@ -428,6 +432,8 @@ function barSegments(entries, mode, options) {
                 heat: laneHeat,
                 delta: laneDelta,
                 hint: lines.join("\n"),
+                exhausted: exhausted,
+                revives: exhausted ? shortCountdown(weekly.resetsAt, now) : "",
                 parts: parts};
         });
 }

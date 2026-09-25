@@ -11,8 +11,8 @@ test('bar entries preserve compact summary quotas, order, privacy and the two-en
         {provider: 'acme', usage: {primary: {usedPercent: 20}}},
         {provider: 'claude', usage: {primary: {usedPercent: 30}}}]), true);
     assert.deepEqual(JSON.parse(JSON.stringify(model.barSegments(rows, 'remaining'))), [
-        {provider: 'codex', tag: 'CX', text: '90%', heat: null, delta: null, hint: '', parts: [{text: '90%', heat: null, delta: null}]},
-        {provider: 'acme', tag: 'acme', text: '80%', heat: null, delta: null, hint: '', parts: [{text: '80%', heat: null, delta: null}]}]);
+        {provider: 'codex', tag: 'CX', text: '90%', heat: null, delta: null, hint: '', exhausted: false, revives: '', parts: [{text: '90%', heat: null, delta: null}]},
+        {provider: 'acme', tag: 'acme', text: '80%', heat: null, delta: null, hint: '', exhausted: false, revives: '', parts: [{text: '80%', heat: null, delta: null}]}]);
     assert.equal(model.summary(rows, 'remaining'), 'CX 90%  ·  acme 80%  +1');
     assert.deepEqual([...model.barSegments(rows, 'used').map(segment => segment.text)], ['10%', '20%']);
     assert.equal(model.summary(rows, 'used'), 'CX 10%  ·  acme 20%  +1');
@@ -23,7 +23,7 @@ test('bar entries retain unavailable quotas and handle empty or single-provider 
     assert.equal(model.summary([]), '');
     const rows = model.rows(JSON.stringify([{provider: 'claude', error: {message: 'private error'}}]));
     assert.deepEqual(JSON.parse(JSON.stringify(model.barSegments(rows))), [
-        {provider: 'claude', tag: 'CL', text: '—', heat: null, delta: null, hint: '', parts: []}]);
+        {provider: 'claude', tag: 'CL', text: '—', heat: null, delta: null, hint: '', exhausted: false, revives: '', parts: []}]);
     assert.equal(model.summary(rows), 'CL —');
 });
 test('quota is clamped, missing quota stays unknown', () => {
@@ -1021,4 +1021,18 @@ test('compact mode publishes the hottest general lane\'s delta for the logo, nev
     assert.equal(entry.heat, 2);
     assert.equal(model.barSegments(rows, 'remaining', {heat: true, detail: true, now})[0].delta, null);
     assert.equal(model.barSegments(rows, 'remaining', {now})[0].delta, null);
+});
+test('a spent weekly quota marks the provider exhausted, a spent session alone does not', () => {
+    const rows = model.rows(JSON.stringify([
+        {provider: 'claude', usage: {primary: {usedPercent: 40, windowMinutes: 300}, secondary: {usedPercent: 100, windowMinutes: 10080}}},
+        {provider: 'codex', usage: {primary: {usedPercent: 100, windowMinutes: 300}, secondary: {usedPercent: 60, windowMinutes: 10080}}}]));
+    assert.deepEqual([...model.barSegments(rows, 'remaining').map(entry => entry.exhausted)], [true, false]);
+    const now = Date.parse('2026-09-24T00:00:00Z');
+    const reset = new Date(now + (44 * 60 + 5) * 60000).toISOString();
+    const spent = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: {usedPercent: 40, windowMinutes: 300, resetsAt: reset},
+        secondary: {usedPercent: 100, windowMinutes: 10080, resetsAt: reset}}}]));
+    const [entry] = model.barSegments(spent, 'remaining', {detail: true, reset: true, now});
+    assert.equal(entry.revives, '1d 20h');
+    assert.equal(entry.text, '5H 60% · 7D 0% (1d 20h)');
 });

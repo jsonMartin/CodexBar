@@ -82,6 +82,12 @@ coloring on, a session or other general lane also shows its countdown while it
 runs over pace, as in `5H 0% (37m)`; per-model caps never do. The compact bar
 and the tray summary stay a bare percentage.
 
+A provider whose weekly quota is spent is drawn struck through and faded, logo
+and every lane alike, until the week resets; pace colors give way to the bar's
+foreground while it is out. With reset countdowns on, the weekly lane's
+countdown is bold, so the time until the provider is back still reads at a
+glance. A spent session alone does not do this.
+
 The popup draws the same pace data per window. The label and its percentage
 share one line with the time the quota lasts — `Lasts until reset`, or
 `Runs out in …` — right-aligned beside it, and the reset time sits below the

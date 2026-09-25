@@ -86,7 +86,7 @@ else:
             self.assertEqual(self.client('--background')['pid'], first['pid'])
         self.assertEqual(first['summary'], 'CX 60%')
         self.assertEqual(first['barEntries'],
-                         [{'provider': 'codex', 'tag': 'CX', 'text': '60%', 'heat': None, 'delta': None, 'hint': '',
+                         [{'provider': 'codex', 'tag': 'CX', 'text': '60%', 'heat': None, 'delta': None, 'hint': '', 'exhausted': False, 'revives': '',
                            'parts': [{'text': '60%', 'heat': None, 'delta': None}]}])
         self.assertNotIn('private@example.com', json.dumps(first))
         self.assertNotIn('executable', first)
@@ -412,7 +412,7 @@ else:
         value = self.client('--snapshot')
         self.assertEqual(value['summary'], 'CX 40%')
         self.assertEqual(value['barEntries'],
-                         [{'provider': 'codex', 'tag': 'CX', 'text': '40%', 'heat': None, 'delta': None, 'hint': '',
+                         [{'provider': 'codex', 'tag': 'CX', 'text': '40%', 'heat': None, 'delta': None, 'hint': '', 'exhausted': False, 'revives': '',
                            'parts': [{'text': '40%', 'heat': None, 'delta': None}]}])
         self.assertEqual(value['entries'][0]['windows'][0]['displayValue'], 40)
         self.assertEqual(value['entries'][0]['windows'][0]['displaySuffix'], 'used')

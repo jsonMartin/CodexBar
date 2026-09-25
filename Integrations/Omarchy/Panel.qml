@@ -119,6 +119,8 @@ Panel {
                     id: segment
                     required property var modelData
                     required property int index
+                    // A spent week draws the whole provider struck through and faded into the bar.
+                    readonly property bool dead: !!modelData && modelData.exhausted === true
                     spacing: Style.space(4)
                     Text {
                         visible: segment.index > 0
@@ -129,13 +131,15 @@ Panel {
                     }
                     Item {
                         id: badge
+                        opacity: segment.dead ? 0.35 : 1
                         // A provider without an installed logo keeps its text tag instead of a gap.
                         readonly property url icon: modelData && modelData.provider
                             ? Qt.resolvedUrl("icons/ProviderIcon-" + modelData.provider + ".svg") : ""
                         readonly property bool loaded: badgeIcon.status === Image.Ready
                         // In compact mode the entry delta is the provider's hottest lane: the mark
                         // takes its color, while the percentage beside it keeps its own lane's.
-                        readonly property color tint: root.paceColor(modelData ? modelData.delta : null, button.foreground)
+                        readonly property color tint: segment.dead ? button.foreground
+                            : root.paceColor(modelData ? modelData.delta : null, button.foreground)
                         // Size to whichever child is drawn. Taking the larger of the two
                         // reserved the hidden tag's width, which is the full provider id for
                         // anything without a short tag, leaving a gap beside the logo.
@@ -172,23 +176,27 @@ Panel {
                             text: modelData && modelData.tag ? modelData.tag : ""
                             textFormat: Text.PlainText
                             color: badge.tint
+                            font.strikeout: segment.dead
                             font.family: button.fontFamily; font.pixelSize: button.fontSize
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
                     Row {
                         id: quota
-                        // Heat colors each quota lane by how fast its window burns. Without any heat,
-                        // or from an older backend without parts, the joined text draws exactly as before.
+                        // Heat colors each quota lane by how fast its window burns, and a spent week bolds its
+                        // reset. Without either, or from an older backend without parts, the joined text draws
+                        // exactly as before.
                         // A Repeater's modelData hands nested arrays over as sequence wrappers, which
                         // Array.isArray rejects, so test for a length instead.
-                        readonly property var parts: modelData && modelData.parts && modelData.parts.length &&
-                            Array.prototype.some.call(modelData.parts, function(p) { return p && p.heat !== null && p.heat !== undefined; })
+                        readonly property var parts: modelData && modelData.parts && modelData.parts.length && (segment.dead ||
+                            Array.prototype.some.call(modelData.parts, function(p) { return p && p.heat !== null && p.heat !== undefined; }))
                             ? modelData.parts : null
                         Text {
                             visible: quota.parts === null
                             text: modelData && modelData.text ? modelData.text : ""
                             color: button.foreground
+                            font.strikeout: segment.dead
+                            opacity: segment.dead ? 0.35 : 1
                             font.family: button.fontFamily; font.pixelSize: button.fontSize
                             textFormat: Text.PlainText
                             anchors.verticalCenter: parent.verticalCenter
@@ -201,19 +209,41 @@ Panel {
                                 required property int index
                                 // Only a hot lane also gains weight.
                                 readonly property bool scorching: !!part.modelData && part.modelData.heat === 3
+                                readonly property string label: part.modelData && part.modelData.text ? part.modelData.text : ""
+                                // A spent provider's weekly countdown stays bold under the strike, so
+                                // the time until it is back still reads at a glance.
+                                readonly property string reset: segment.dead && segment.modelData.revives &&
+                                    part.label.endsWith(" (" + segment.modelData.revives + ")")
+                                    ? " (" + segment.modelData.revives + ")" : ""
                                 // The joined text's own separator, so lanes stay distinct from the
                                 // dimmed mark between providers.
                                 Text {
                                     visible: part.index > 0
                                     text: " · "
                                     color: button.foreground
+                                    font.strikeout: segment.dead
+                                    opacity: segment.dead ? 0.35 : 1
                                     font.family: button.fontFamily; font.pixelSize: button.fontSize
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 Text {
-                                    text: part.modelData && part.modelData.text ? part.modelData.text : ""
-                                    color: root.paceColor(part.modelData ? part.modelData.delta : null, button.foreground)
-                                    font.bold: part.scorching
+                                    text: part.label.slice(0, part.label.length - part.reset.length)
+                                    color: segment.dead ? button.foreground
+                                        : root.paceColor(part.modelData ? part.modelData.delta : null, button.foreground)
+                                    font.bold: part.scorching && !segment.dead
+                                    font.strikeout: segment.dead
+                                    opacity: segment.dead ? 0.35 : 1
+                                    font.family: button.fontFamily; font.pixelSize: button.fontSize
+                                    textFormat: Text.PlainText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    visible: part.reset !== ""
+                                    text: part.reset
+                                    color: button.foreground
+                                    font.bold: true
+                                    font.strikeout: true
+                                    opacity: 0.4
                                     font.family: button.fontFamily; font.pixelSize: button.fontSize
                                     textFormat: Text.PlainText
                                     anchors.verticalCenter: parent.verticalCenter
