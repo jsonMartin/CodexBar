@@ -38,7 +38,7 @@ if args[0]=='cost':
 else:
  usage=state.get('usage',{'identity':{'accountEmail':'private@example.com'},
  'primary':{'usedPercent':40,'windowMinutes':300,'resetsAt':'2030-01-01T00:00:00Z'}})
- print(json.dumps([{'provider':provider,'usage':usage,'rateWindowLabels':state.get('rateWindowLabels')}]))
+ print(json.dumps([{'provider':provider,'usage':usage,'rateWindowLabels':state.get('rateWindowLabels'),'pace':state.get('pace')}]))
 ''')
         self.fake.chmod(0o755)
         self.log = (self.root / 'desktop.log').open('w+')
@@ -85,9 +85,14 @@ else:
         for _ in range(3):
             self.assertEqual(self.client('--background')['pid'], first['pid'])
         self.assertEqual(first['summary'], 'CX 60%')
-        self.assertEqual(first['barEntries'], [{'provider': 'codex', 'tag': 'CX', 'text': '60%'}])
+        self.assertEqual(first['barEntries'],
+                         [{'provider': 'codex', 'tag': 'CX', 'text': '60%', 'heat': None, 'delta': None, 'hint': '',
+                           'parts': [{'text': '60%', 'heat': None, 'delta': None}]}])
         self.assertNotIn('private@example.com', json.dumps(first))
         self.assertNotIn('executable', first)
+        # The fixture's reset lies beyond its own window, so no pace applies; a JS null must not
+        # reach the popup as 0, which it would draw as an expected point at 100%.
+        self.assertIsNone(first['entries'][0]['windows'][0]['expectedDisplay'])
         socket = self.runtime / 'codexbar-linux' / 'desktop.sock'
         self.assertEqual(socket.stat().st_mode & 0o077, 0)
         calls = (self.root / 'calls.jsonl').read_text().splitlines()
@@ -190,6 +195,106 @@ else:
         # The tray tooltip keeps its own compact form.
         self.assertEqual(value['summary'], 'CX 37%')
 
+    def test_popup_pace_follows_the_show_pace_preference(self):
+        (self.root / 'state.json').write_text(json.dumps({'pace': {'primary': {
+            'deltaPercent': 22, 'summary': '22% in deficit | Runs out in 1d 5h',
+            'expectedUsedPercent': 85, 'etaSeconds': 129600}}}))
+        self.client('--refresh')
+        value = self.wait_for(lambda value: value['entries'][0]['windows'][0].get('pace'))
+        window = value['entries'][0]['windows'][0]
+        self.assertEqual(window['pace'], '22% in deficit | Runs out in 1d 5h')
+        self.assertEqual(window['eta'], 'Runs out in 1d 12h')
+        self.assertEqual(window['expectedDisplay'], 15)
+        self.assertTrue(self.client('--configure', '{"showPace":false}')['ok'])
+        value = self.wait_for(lambda value: value['entries'][0]['windows'][0].get('pace') == '')
+        window = value['entries'][0]['windows'][0]
+        self.assertEqual(window['pace'], '')
+        self.assertEqual(window['eta'], '')
+        self.assertIsNone(window['expectedDisplay'])
+
+    def test_stale_pace_is_blank_until_the_window_resets(self):
+        # A reset in the past leaves the CLI's figures describing an elapsed window: the popup
+        # must not print "Reset due" beside "63% in reserve · Expected 100% used".
+        (self.root / 'state.json').write_text(json.dumps({'usage': {
+            'primary': {'usedPercent': 63, 'windowMinutes': 300, 'resetsAt': '2020-01-01T00:00:00Z'},
+            'secondary': {'usedPercent': 39, 'windowMinutes': 10080, 'resetsAt': '2030-01-01T00:00:00Z'}},
+            'pace': {'primary': {'deltaPercent': -63, 'summary': '63% in reserve | Expected 100% used',
+                                 'expectedUsedPercent': 100, 'etaSeconds': 3600, 'willLastToReset': True},
+                     'secondary': {'deltaPercent': -8, 'expectedUsedPercent': 50, 'etaSeconds': 7200}}}))
+        self.client('--refresh')
+        value = self.wait_for(lambda value: len(value['entries'][0]['windows']) == 2 and not value['busy'])
+        stale, live = value['entries'][0]['windows']
+        self.assertEqual(stale['pace'], '')
+        self.assertEqual(stale['eta'], '')
+        self.assertIsNone(stale['expected'])
+        self.assertIsNone(stale['expectedDisplay'])
+        self.assertEqual(live['eta'], 'Runs out in 2h 0m')
+        self.assertEqual(live['expectedDisplay'], 50)
+        self.assertTrue(self.client('--configure', '{"showHeat":true}')['ok'])
+        value = self.wait_for(lambda value: value['entries'][0]['windows'][1].get('heat') is not None)
+        self.assertIsNone(value['entries'][0]['windows'][0]['heat'])
+        self.assertEqual(value['entries'][0]['windows'][1]['heat'], 0)
+
+    def test_expected_display_follows_the_quota_mode(self):
+        (self.root / 'state.json').write_text(json.dumps({'pace': {'primary': {
+            'deltaPercent': 5, 'expectedUsedPercent': 30, 'etaSeconds': 3600}}}))
+        self.client('--refresh')
+        value = self.wait_for(lambda value: value['entries'][0]['windows'][0].get('expectedDisplay') == 70)
+        self.assertEqual(value['entries'][0]['windows'][0]['displayValue'], 60)
+        self.assertTrue(self.client('--configure', '{"quotaDisplay":"used"}')['ok'])
+        value = self.wait_for(lambda value: value['entries'][0]['windows'][0]['expectedDisplay'] == 30)
+        self.assertEqual(value['entries'][0]['windows'][0]['displayValue'], 40)
+
+    def test_popup_heat_stays_null_until_the_preference_turns_it_on(self):
+        reset = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=150)
+        (self.root / 'state.json').write_text(json.dumps({'usage': {
+            'primary': {'usedPercent': 63, 'windowMinutes': 300,
+                        'resetsAt': reset.strftime('%Y-%m-%dT%H:%M:%SZ')}}}))
+        self.client('--refresh')
+        value = self.wait_for(lambda value: value.get('entries') and not value['busy'])
+        self.assertIsNone(value['entries'][0]['windows'][0]['heat'])
+        # Without CLI pace the popup falls back to the straight-line pace: half the window is gone.
+        self.assertEqual(round(value['entries'][0]['windows'][0]['expectedDisplay']), 50)
+        self.assertTrue(self.client('--configure', '{"showHeat":true}')['ok'])
+        value = self.wait_for(lambda value: value['entries'][0]['windows'][0].get('heat') == 3)
+        self.assertEqual([part['text'] for part in value['barEntries'][0]['parts']], ['37%'])
+
+    def test_weekly_reset_countdown_is_opt_in_for_the_bar(self):
+        weekly_reset = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=3, hours=2)
+        (self.root / 'state.json').write_text(json.dumps({'usage': {
+            'primary': {'usedPercent': 63, 'windowMinutes': 300, 'resetsAt': '2030-01-01T05:00:00Z'},
+            'secondary': {'usedPercent': 39, 'windowMinutes': 10080,
+                          'resetsAt': weekly_reset.strftime('%Y-%m-%dT%H:%M:%SZ')}}}))
+        self.client('--refresh')
+        self.assertTrue(self.client('--configure', '{"showBarReset":true}')['ok'])
+        # Compact mode is unchanged even with the preference on.
+        value = self.wait_for(lambda value: value.get('entries') and not value['busy'])
+        self.assertEqual([entry['text'] for entry in value['barEntries']], ['37%'])
+        self.assertTrue(self.client('--configure', '{"showBarDetail":true}')['ok'])
+        value = self.wait_for(lambda value: '(' in value['barEntries'][0]['text'])
+        self.assertEqual([entry['text'] for entry in value['barEntries']], ['5H 37% · 7D 61% (3d 2h)'])
+        self.assertTrue(self.client('--configure', '{"showBarReset":false}')['ok'])
+        value = self.wait_for(lambda value: '(' not in value['barEntries'][0]['text'])
+        self.assertEqual([entry['text'] for entry in value['barEntries']], ['5H 37% · 7D 61%'])
+
+    def test_bar_heat_coloring_is_opt_in(self):
+        # Half the 300-minute window has elapsed, so 63% used burns well past the calm stage.
+        reset = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=150)
+        (self.root / 'state.json').write_text(json.dumps({'usage': {
+            'primary': {'usedPercent': 63, 'windowMinutes': 300,
+                        'resetsAt': reset.strftime('%Y-%m-%dT%H:%M:%SZ')}}}))
+        self.client('--refresh')
+        value = self.wait_for(lambda value: value.get('entries') and not value['busy'])
+        self.assertEqual([(entry['text'], [part['heat'] for part in entry['parts']]) for entry in value['barEntries']],
+                         [('37%', [None])])
+        self.assertTrue(self.client('--configure', '{"showHeat":true}')['ok'])
+        value = self.wait_for(lambda value: value['barEntries'][0]['parts'][0]['heat'] == 3)
+        self.assertEqual([part['text'] for part in value['barEntries'][0]['parts']], ['37%'])
+        # Half the window has elapsed, so 63% used runs 13 points past its share: the entry the
+        # logo colors reads hot, and the tooltip spells the deficit and the reset out.
+        self.assertEqual([entry['heat'] for entry in value['barEntries']], [3])
+        self.assertEqual([entry['hint'] for entry in value['barEntries']], ['Codex 37% · 13% in deficit · Runs out in 1h 29m · reset 2h 30m'])
+
     def test_settings_from_before_the_bar_preferences_survive_an_upgrade(self):
         self.client('--quit')
         self.process.wait(timeout=4)
@@ -209,7 +314,8 @@ else:
         self.assertEqual({key: saved[key] for key in ['provider', 'providerOrder', 'quotaDisplay', 'showPace', 'refreshSeconds']},
                          {'provider': 'custom', 'providerOrder': ['claude', 'codex'], 'quotaDisplay': 'used',
                           'showPace': False, 'refreshSeconds': 600})
-        self.assertEqual((saved['showBarDetail'], saved['showScopedCaps'], saved['barProviders']), (False, False, 2))
+        self.assertEqual((saved['showBarDetail'], saved['showScopedCaps'], saved['showBarReset'], saved['barProviders']),
+                         (False, False, False, 2))
 
     def test_invalid_config_is_not_overwritten(self):
         self.client('--quit')
@@ -305,7 +411,9 @@ else:
         self.client('--configure', '{"quotaDisplay":"used","resetDisplay":"absolute"}')
         value = self.client('--snapshot')
         self.assertEqual(value['summary'], 'CX 40%')
-        self.assertEqual(value['barEntries'], [{'provider': 'codex', 'tag': 'CX', 'text': '40%'}])
+        self.assertEqual(value['barEntries'],
+                         [{'provider': 'codex', 'tag': 'CX', 'text': '40%', 'heat': None, 'delta': None, 'hint': '',
+                           'parts': [{'text': '40%', 'heat': None, 'delta': None}]}])
         self.assertEqual(value['entries'][0]['windows'][0]['displayValue'], 40)
         self.assertEqual(value['entries'][0]['windows'][0]['displaySuffix'], 'used')
         self.assertFalse(value['busy'])

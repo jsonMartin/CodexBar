@@ -19,6 +19,39 @@ Panel {
     function poll() { if (!reader.running) reader.running = true; }
     function launch(page) { Quickshell.execDetached([executable, "--" + page]); close(); }
     function refresh() { Quickshell.execDetached([executable, "--refresh"]); }
+    // Pace colors come from the theme's own palette. Omarchy's Color exposes only red (urgent), so
+    // the widget reads colors.toml itself, falling back to the ANSI slots older themes use.
+    property color paceBlue: Color.accent
+    property color paceOrange: Color.urgent
+    property color paceRed: Color.urgent
+    function loadPalette(raw) {
+        var found = {};
+        String(raw || "").split("\n").forEach(function(line) {
+            var match = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["']?(#[0-9A-Fa-f]{6})/);
+            if (match) found[match[1]] = match[2];
+        });
+        paceBlue = found.blue || found.color4 || Color.accent;
+        paceOrange = found.orange || found.color3 || found.yellow || Color.urgent;
+        paceRed = found.red || found.color1 || Color.urgent;
+    }
+    FileView {
+        id: themeColors
+        path: Color.currentThemePath + "/colors.toml"
+        watchChanges: true; printErrors: false
+        onFileChanged: reload()
+        onLoaded: root.loadPalette(text())
+        onLoadFailed: root.loadPalette("")
+    }
+    // A theme switch reaches Color over IPC and may not touch this path, so follow Color as well.
+    Connections { target: Color; function onForegroundChanged() { themeColors.reload() } }
+    // Diverging pace scale around Core's on-pace band (±6): reserve fades from `base` toward blue by
+    // −25; a deficit is a warning from its first step, running orange to red by +25.
+    function paceColor(delta, base) {
+        if (typeof delta !== "number" || Math.abs(delta) <= 6) return base;
+        var t = Math.min(1, (Math.abs(delta) - 6) / 19);
+        var from = delta < 0 ? base : paceOrange, to = delta < 0 ? paceBlue : paceRed;
+        return Qt.tint(from, Qt.rgba(to.r, to.g, to.b, t));
+    }
     Component.onCompleted: Qt.callLater(poll)
     onSettingsChanged: Qt.callLater(poll)
     onOpenedChanged: if (opened) poll()
@@ -51,7 +84,14 @@ Panel {
         // The own label stays the tooltip fallback and the fallback renderer; icons replace it when present.
         labelVisible: !icons
         fixedWidth: icons ? badges.implicitWidth + scaledHorizontalMargin * 2 : -1
-        tooltipText: "CodexBar · quota " + (root.snapshot.quotaDisplay || "remaining") + "\nClick for usage · middle-click to refresh"
+        // Heat moves the pace figure off the bar; the tooltip then spells out each warm lane.
+        tooltipText: {
+            var base = "CodexBar · quota " + (root.snapshot.quotaDisplay || "remaining") +
+                "\nClick for usage · middle-click to refresh"
+            var lines = segments.map(function(entry) { return entry && entry.hint ? entry.hint : ""; })
+                .filter(function(line) { return line !== ""; })
+            return lines.length ? base + "\n" + lines.join("\n") : base
+        }
         onPressed: function(code) { if (code === Qt.MiddleButton) root.refresh(); else root.toggle(); }
         Row {
             id: badges
@@ -85,6 +125,9 @@ Panel {
                         readonly property url icon: modelData && modelData.provider
                             ? Qt.resolvedUrl("icons/ProviderIcon-" + modelData.provider + ".svg") : ""
                         readonly property bool loaded: badgeIcon.status === Image.Ready
+                        // In compact mode the entry delta is the provider's hottest lane: the mark
+                        // takes its color, while the percentage beside it keeps its own lane's.
+                        readonly property color tint: root.paceColor(modelData ? modelData.delta : null, button.foreground)
                         // Size to whichever child is drawn. Taking the larger of the two
                         // reserved the hidden tag's width, which is the full provider id for
                         // anything without a short tag, leaving a gap beside the logo.
@@ -113,24 +156,62 @@ Panel {
                             contrast: -1.0
                             brightness: 0.5
                             colorization: 1.0
-                            colorizationColor: button.foreground
+                            colorizationColor: badge.tint
                         }
                         Text {
                             id: badgeTag
                             visible: !badge.loaded
                             text: modelData && modelData.tag ? modelData.tag : ""
                             textFormat: Text.PlainText
-                            color: button.foreground
+                            color: badge.tint
                             font.family: button.fontFamily; font.pixelSize: button.fontSize
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
-                    Text {
-                        text: modelData && modelData.text ? modelData.text : ""
-                        color: button.foreground
-                        font.family: button.fontFamily; font.pixelSize: button.fontSize
-                        textFormat: Text.PlainText
-                        anchors.verticalCenter: parent.verticalCenter
+                    Row {
+                        id: quota
+                        // Heat colors each quota lane by how fast its window burns. Without any heat,
+                        // or from an older backend without parts, the joined text draws exactly as before.
+                        // A Repeater's modelData hands nested arrays over as sequence wrappers, which
+                        // Array.isArray rejects, so test for a length instead.
+                        readonly property var parts: modelData && modelData.parts && modelData.parts.length &&
+                            Array.prototype.some.call(modelData.parts, function(p) { return p && p.heat !== null && p.heat !== undefined; })
+                            ? modelData.parts : null
+                        Text {
+                            visible: quota.parts === null
+                            text: modelData && modelData.text ? modelData.text : ""
+                            color: button.foreground
+                            font.family: button.fontFamily; font.pixelSize: button.fontSize
+                            textFormat: Text.PlainText
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Repeater {
+                            model: quota.parts || []
+                            Row {
+                                id: part
+                                required property var modelData
+                                required property int index
+                                // Only a hot lane also gains weight.
+                                readonly property bool scorching: !!part.modelData && part.modelData.heat === 3
+                                // The joined text's own separator, so lanes stay distinct from the
+                                // dimmed mark between providers.
+                                Text {
+                                    visible: part.index > 0
+                                    text: " · "
+                                    color: button.foreground
+                                    font.family: button.fontFamily; font.pixelSize: button.fontSize
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: part.modelData && part.modelData.text ? part.modelData.text : ""
+                                    color: root.paceColor(part.modelData ? part.modelData.delta : null, button.foreground)
+                                    font.bold: part.scorching
+                                    font.family: button.fontFamily; font.pixelSize: button.fontSize
+                                    textFormat: Text.PlainText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -156,7 +237,8 @@ Panel {
         anchorItem: button; owner: root; bar: root.bar; open: root.opened
         focusTarget: keys
         contentWidth: fittedContentWidth(Style.space(330))
-        contentHeight: fittedContentHeight(content.implicitHeight, Style.space(440))
+        // Grow to the screen before scrolling; the panel caps itself at the available height.
+        contentHeight: fittedContentHeight(content.implicitHeight)
         FocusScope {
             id: keys
             anchors.fill: parent
@@ -183,20 +265,103 @@ Panel {
                             Repeater {
                                 model: modelData.windows
                                 Column {
+                                    id: lane
                                     required property var modelData
                                     width: content.width; spacing: Style.space(4)
-                                    Caption { text: modelData.label + " · " + (modelData.displayValue === undefined ? modelData.remaining : modelData.displayValue) + "% " + (modelData.displaySuffix || "left") }
-                                    Rectangle {
-                                        width: parent.width; height: Style.space(5); radius: height / 2
-                                        color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.15)
-                                        Rectangle {
-                                            width: parent.width * (modelData.displayValue === undefined ? modelData.remaining : modelData.displayValue) / 100; height: parent.height; radius: height / 2
-                                            color: modelData.warning ? Color.urgent : Color.accent
+                                    readonly property real value: modelData.displayValue === undefined ? modelData.remaining : modelData.displayValue
+                                    readonly property bool hasExpected: modelData.expectedDisplay !== null && modelData.expectedDisplay !== undefined
+                                    // Only a window burning ahead of its elapsed share has a deficit
+                                    // gap to draw; heat 1..3 implies that even without a CLI delta.
+                                    readonly property bool overPace: (typeof modelData.delta === "number" && modelData.delta > 0) ||
+                                        (typeof modelData.paceDelta === "number" && modelData.paceDelta > 0)
+                                    // Heat decides whether the lane is colored at all; null keeps it neutral.
+                                    readonly property var colorDelta: modelData.heat !== null && modelData.heat !== undefined &&
+                                        typeof modelData.delta === "number" ? modelData.delta : null
+                                    Row {
+                                        width: parent.width; spacing: Style.space(6)
+                                        Caption {
+                                            id: quotaLabel
+                                            // The eta shares the lane's one line and yields to the quota
+                                            // by eliding, so the percentage is never the part cut off.
+                                            width: Math.min(implicitWidth, parent.width)
+                                            wrapMode: Text.NoWrap; elide: Text.ElideRight
+                                            text: lane.modelData.label + " · " + lane.value + "% " + (lane.modelData.displaySuffix || "left")
+                                        }
+                                        Caption {
+                                            id: eta
+                                            // The backend blanks eta unless pace data survives for the window.
+                                            visible: (lane.modelData.eta || "") !== ""
+                                            width: Math.max(0, parent.width - quotaLabel.width - parent.spacing)
+                                            wrapMode: Text.NoWrap; elide: Text.ElideRight
+                                            horizontalAlignment: Text.AlignRight
+                                            text: lane.modelData.eta || ""
+                                            opacity: 0.7
+                                            color: root.paceColor(lane.colorDelta, Color.foreground)
+                                            font.bold: lane.modelData.heat === 3
                                         }
                                     }
-                                    Caption {
-                                        text: modelData.resetText || "Reset time unavailable"
-                                        visible: text !== ""; opacity: 0.65
+                                    Item {
+                                        width: parent.width; height: Style.space(5)
+                                        readonly property real expected: lane.hasExpected ? lane.modelData.expectedDisplay : lane.value
+                                        Rectangle {
+                                            width: parent.width; height: parent.height; radius: height / 2
+                                            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.15)
+                                        }
+                                        // Where the window "should" be by now, drawn under the real fill.
+                                        Rectangle {
+                                            visible: lane.hasExpected
+                                            width: parent.width * parent.expected / 100; height: parent.height; radius: height / 2
+                                            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.25)
+                                        }
+                                        Rectangle {
+                                            width: parent.width * lane.value / 100; height: parent.height; radius: height / 2
+                                            color: lane.modelData.warning ? Color.urgent : Color.accent
+                                        }
+                                        // Over the fill, so the overspend also shows in used mode, where it
+                                        // lies inside the fill rather than beyond it.
+                                        Rectangle {
+                                            // Colored lanes show a gap on either side of pace; neutral ones only overspend.
+                                            visible: lane.hasExpected && (lane.colorDelta !== null ? Math.abs(lane.colorDelta) > 6 : lane.overPace)
+                                            x: parent.width * Math.min(lane.value, parent.expected) / 100
+                                            width: parent.width * Math.abs(lane.value - parent.expected) / 100
+                                            height: parent.height; radius: height / 2
+                                            readonly property color tone: root.paceColor(lane.colorDelta, Color.foreground)
+                                            color: lane.colorDelta !== null ? Qt.rgba(tone.r, tone.g, tone.b, 0.85)
+                                                : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.35)
+                                        }
+                                        Rectangle {
+                                            visible: lane.hasExpected
+                                            x: parent.width * parent.expected / 100 - 1
+                                            width: 2; height: parent.height + Style.space(4); radius: 1
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.8)
+                                        }
+                                    }
+                                    Row {
+                                        width: parent.width; spacing: Style.space(6)
+                                        Caption {
+                                            id: resetLabel
+                                            width: Math.min(implicitWidth, parent.width)
+                                            wrapMode: Text.NoWrap; elide: Text.ElideRight
+                                            text: lane.modelData.resetText || "Reset time unavailable"
+                                            opacity: 0.65
+                                        }
+                                        Caption {
+                                            // The pace delta rides the reset line's free end, so keeping the
+                                            // percentage costs no height. It shares the eta's staleness gate.
+                                            readonly property var delta: !lane.hasExpected ? null
+                                                : typeof lane.modelData.delta === "number" ? lane.modelData.delta
+                                                : typeof lane.modelData.paceDelta === "number" ? Math.round(lane.modelData.paceDelta) : null
+                                            visible: delta !== null
+                                            width: Math.max(0, parent.width - resetLabel.width - parent.spacing)
+                                            wrapMode: Text.NoWrap; elide: Text.ElideRight
+                                            horizontalAlignment: Text.AlignRight
+                                            text: delta === null ? "" : delta === 0 ? "On pace"
+                                                : Math.abs(delta) + "% " + (delta > 0 ? "over" : "under") + " pace"
+                                            opacity: 0.7
+                                            color: eta.color
+                                            font.bold: eta.font.bold
+                                        }
                                     }
                                 }
                             }
@@ -208,6 +373,7 @@ Panel {
                         Button { text: "Settings…"; focusable: true; onClicked: root.launch("settings") }
                     }
                     Button { text: "Refresh"; focusable: true; enabled: root.available && !root.snapshot.busy; onClicked: root.refresh() }
+                    }
                 }
             }
         }

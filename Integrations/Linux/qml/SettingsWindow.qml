@@ -29,7 +29,9 @@ ApplicationWindow {
         reset.currentIndex = reset.model.indexOf(s.resetDisplay);
         trayStyle.currentIndex = trayStyle.model.indexOf(s.trayStyle);
         theme.checked = s.followOmarchyTheme; pace.checked = s.showPace; warnings.checked = s.warningColors;
-        barDetail.checked = s.showBarDetail; scopedCaps.checked = s.showScopedCaps; barProviders.value = s.barProviders;
+        barDetail.checked = s.showBarDetail; scopedCaps.checked = s.showScopedCaps; heat.checked = s.showHeat;
+        barReset.checked = s.showBarReset;
+        barProviders.value = s.barProviders;
         refreshOnOpen.checked = s.refreshOnOpen;
         tray.checked = s.showTray; executable.text = s.executable; feedback = "";
     }
@@ -168,6 +170,8 @@ ApplicationWindow {
                         Option { id: pace; text: "Show pace" }
                         Option { id: barDetail; text: "Show session, weekly and pace in the bar" }
                         Option { id: scopedCaps; text: "Show per-model caps in the bar" }
+                        Option { id: heat; text: "Color quotas by pace" }
+                        Option { id: barReset; text: "Show reset countdowns in the bar" }
                         RowLayout {
                             Layout.fillWidth: true
                             Label { text: "Providers in the bar"; Layout.fillWidth: true; wrapMode: Text.Wrap }
@@ -207,7 +211,9 @@ ApplicationWindow {
                         notifyThreshold: threshold.value, refreshSeconds: interval.value,
                         providerOrder: window.providerOrder, quotaDisplay: quota.currentText, resetDisplay: reset.currentText,
                         followOmarchyTheme: theme.checked, showPace: pace.checked,
-                        showBarDetail: barDetail.checked, showScopedCaps: scopedCaps.checked, barProviders: barProviders.value, warningColors: warnings.checked, trayStyle: trayStyle.currentText,
+                        showBarDetail: barDetail.checked, showScopedCaps: scopedCaps.checked, showHeat: heat.checked,
+                        showBarReset: barReset.checked,
+                        barProviders: barProviders.value, warningColors: warnings.checked, trayStyle: trayStyle.currentText,
                         refreshOnOpen: refreshOnOpen.checked, showTray: tray.checked, executable: executable.text.trim()})) window.feedback = "Settings saved";
                 }
             }
