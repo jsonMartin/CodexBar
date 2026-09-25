@@ -85,9 +85,9 @@ and the tray summary stay a bare percentage.
 The popup draws the same pace data per window. The label and its percentage
 share one line with the time the quota lasts — `Lasts until reset`, or
 `Runs out in …` — right-aligned beside it, and the reset time sits below the
-bar, with the percentage above or below pace at its right. A dimmer ghost fill
-marks the level the window is expected to have reached, with a tick at its
-edge, and the stretch between it and the real fill takes the pace color. The
+bar, with the percentage above or below pace at its right. The real fill takes
+the pace color; the rest of the track stays dim, with a fainter ghost fill and a
+tick marking the level the window is expected to have reached. The
 CLI paces a provider's session and weekly windows itself; a per-model cap such
 as `Fable only` gets the straight-line pace its own reset implies, in the popup
 and in the tooltip alike. Pace whose window has already run past its reset is

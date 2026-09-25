@@ -286,10 +286,6 @@ Panel {
                                     width: content.width; spacing: Style.space(4)
                                     readonly property real value: modelData.displayValue === undefined ? modelData.remaining : modelData.displayValue
                                     readonly property bool hasExpected: modelData.expectedDisplay !== null && modelData.expectedDisplay !== undefined
-                                    // Only a window burning ahead of its elapsed share has a deficit
-                                    // gap to draw; heat 1..3 implies that even without a CLI delta.
-                                    readonly property bool overPace: (typeof modelData.delta === "number" && modelData.delta > 0) ||
-                                        (typeof modelData.paceDelta === "number" && modelData.paceDelta > 0)
                                     // Heat decides whether the lane is colored at all; null keeps it neutral.
                                     readonly property var colorDelta: modelData.heat !== null && modelData.heat !== undefined &&
                                         typeof modelData.delta === "number" ? modelData.delta : null
@@ -329,21 +325,11 @@ Panel {
                                             width: parent.width * parent.expected / 100; height: parent.height; radius: height / 2
                                             color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.25)
                                         }
+                                        // Only the real fill is lit, in the pace color; the rest of the track,
+                                        // the expected ghost and its tick stay dim so the bar never reads fuller.
                                         Rectangle {
                                             width: parent.width * lane.value / 100; height: parent.height; radius: height / 2
-                                            color: lane.modelData.warning ? Color.urgent : Color.accent
-                                        }
-                                        // Over the fill, so the overspend also shows in used mode, where it
-                                        // lies inside the fill rather than beyond it.
-                                        Rectangle {
-                                            // Colored lanes show a gap on either side of pace; neutral ones only overspend.
-                                            visible: lane.hasExpected && (lane.colorDelta !== null ? Math.abs(lane.colorDelta) > 6 : lane.overPace)
-                                            x: parent.width * Math.min(lane.value, parent.expected) / 100
-                                            width: parent.width * Math.abs(lane.value - parent.expected) / 100
-                                            height: parent.height; radius: height / 2
-                                            readonly property color tone: root.paceColor(lane.colorDelta, Color.foreground)
-                                            color: lane.colorDelta !== null ? Qt.rgba(tone.r, tone.g, tone.b, 0.85)
-                                                : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.35)
+                                            color: root.paceColor(lane.colorDelta, lane.modelData.warning ? Color.urgent : Color.accent)
                                         }
                                         Rectangle {
                                             visible: lane.hasExpected
