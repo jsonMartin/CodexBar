@@ -93,9 +93,8 @@ as `Fable only` gets the straight-line pace its own reset implies, in the popup
 and in the tooltip alike. Pace whose window has already run past its reset is
 blanked until the next refresh.
 
-**Hide on this monitor** in the popup hides the widget on that output, and each
-hidden output gets a **Show on …** button in the other monitors' popups. The
-Settings window lists every connected monitor as well; the choice is stored in
+The Settings window lists every connected monitor under **Hide the Omarchy
+widget on**; the widget hides itself on the checked outputs, stored in
 `linux.json` as `hiddenOutputs`.
 
 The tray tooltip keeps its own compact two-provider form.
