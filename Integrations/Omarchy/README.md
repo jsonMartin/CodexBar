@@ -41,7 +41,7 @@ providers remain in the popup and continue polling. Both checkout and release
 archive installs include the existing Mac app SVGs. The backend supplies structured
 `barEntries`, and older backends fall back to their plain `summary` text.
 
-Three display preferences extend that bar. All are off, or at the count the bar
+Five display preferences extend that bar. All are off, or at the count the bar
 already used, so an upgrade changes nothing. None of them changes what is polled:
 a provider the bar hides is still queried, listed in the popup and notified about.
 
@@ -63,6 +63,45 @@ lane beside them, because they often repeat it.
 **Providers in the bar** sets how many providers appear, two by default, and
 `0` shows every one. Four providers each showing a session lane, a weekly lane
 and a pace take about 1500 logical pixels, so raise it where the display has room.
+
+**Color quotas by pace** colors each quota percentage by how fast its
+window burns relative to the time left before it resets, using the same pace
+measure as the macOS menu bar, on a diverging scale read from the current
+theme's `colors.toml`: within six points of pace a lane keeps the bar's
+foreground, a reserve fades toward the theme's blue, and a deficit runs from
+its orange to its red, turning bold past twelve points. Themes without those
+names fall back to the `color4`, `color3` and `color1` slots. Windows without a
+pace or a usable reset time stay uncolored. With heat on, the weekly pace figure
+moves from the bar to the panel's hover tooltip as one line per warm or hot
+lane, and in compact mode each provider's logo takes the color of its hottest
+lane.
+
+**Show reset countdowns in the bar** appends the weekly window's reset
+countdown to the detailed bar's weekly lane, as in `7D 61% (3d 2h)`. With pace
+coloring on, a session or other general lane also shows its countdown while it
+runs over pace, as in `5H 0% (37m)`; per-model caps never do. The compact bar
+and the tray summary stay a bare percentage.
+
+With pace coloring on, a provider whose weekly quota is spent is faded, logo and
+lanes alike, and its lanes are struck through until the week resets; pace colors
+give way to the bar's foreground while it is out. With reset countdowns on, the
+weekly lane's countdown is bold, so the time until the provider is back still
+reads at a glance. A spent session alone does not do this.
+
+The popup draws the same pace data per window. The label and its percentage
+share one line with the time the quota lasts — `Lasts until reset`, or
+`Runs out in …` — right-aligned beside it, and the reset time sits below the
+bar, with the percentage above or below pace at its right. The real fill takes
+the pace color; the rest of the track stays dim, with a fainter ghost fill and a
+tick marking the level the window is expected to have reached. The
+CLI paces a provider's session and weekly windows itself; a per-model cap such
+as `Fable only` gets the straight-line pace its own reset implies, in the popup
+and in the tooltip alike. Pace whose window has already run past its reset is
+blanked until the next refresh.
+
+The Settings window lists every connected monitor under **Hide the Omarchy
+widget on**; the widget hides itself on the checked outputs, stored in
+`linux.json` as `hiddenOutputs`.
 
 The tray tooltip keeps its own compact two-provider form.
 

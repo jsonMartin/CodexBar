@@ -49,7 +49,7 @@ public:
     Q_INVOKABLE void showWindow(const QString &page);
     Q_INVOKABLE bool saveSettings(const QVariantMap &changes);
     Q_INVOKABLE void copySummary();
-    QJsonObject snapshot() const;
+    QJsonObject snapshot();
 
 signals:
     void changed();

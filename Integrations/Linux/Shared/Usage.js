@@ -59,7 +59,8 @@ function rows(text, showIdentity) {
             var pace = entry.pace && entry.pace[key] ? entry.pace[key] : null;
             windows.push({key: copy ? "extra:" + copy.id : key, label: label, minutes: number(window.windowMinutes),
                 remaining: left, resetsAt: window.resetsAt || "", pace: pace ? String(pace.summary || "") : "",
-                paceDelta: pace ? number(pace.deltaPercent) : null});
+                paceDelta: pace ? number(pace.deltaPercent) : null,
+                expected: pace ? number(pace.expectedUsedPercent) : null, eta: etaText(pace)});
         });
         // Extras come last: a consumer resolving a cadence by first match must still find the
         // provider's general window rather than a lane scoped to one model.
@@ -72,7 +73,7 @@ function rows(text, showIdentity) {
                 cadenceLabel(scopedWindow.windowMinutes) || "Additional";
             windows.push({key: "extra:" + extra.id, label: label, minutes: number(scopedWindow.windowMinutes),
                 remaining: remaining(scopedWindow), resetsAt: scopedWindow.resetsAt || "", pace: "",
-                paceDelta: null, scoped: true});
+                paceDelta: null, expected: null, eta: "", scoped: true});
         });
         return {
             provider: entry.provider,
@@ -271,27 +272,40 @@ function bindingScope(item, session, weekly, windows) {
     return !general || item.remaining < general.remaining;
 }
 
-// One provider's bar text. Without `detail` this is the single leading percentage the adapter has
-// always drawn, so an upgrade changes nothing until the preference is switched on.
-function laneSegments(entry, mode, options) {
+// A detailed lane with the opt-in reset countdown, as in 7D 26% (3d 2h). The weekly lane always
+// carries it; other general lanes only while heat marks them over pace, when the reset is the time
+// that matters. The compact bar and the tray summary stay a bare percentage.
+function laneText(item, mode, settings, now, always) {
+    var text = (laneLabel(item.minutes) || item.label) + " " + quotaValue(item.remaining, mode) + "%";
+    if (settings.reset !== true) return text;
+    if (!always && !(settings.heat === true && heatLevel(item, now) >= 2)) return text;
+    var countdown = shortCountdown(item.resetsAt, now);
+    return countdown === "" ? text : text + " (" + countdown + ")";
+}
+
+// One provider's bar segments, each carrying the window it renders so the caller can color it.
+// Without `detail` this is the single leading percentage the adapter has always drawn, so an
+// upgrade changes nothing until the preference is switched on.
+function laneSegments(entry, mode, options, now) {
     var settings = options || {};
     var windows = entry.windows || [];
     var session = sessionWindow(windows);
     var weekly = weeklyWindow(windows);
     var segments = [], rendered = [];
+    var push = function(text, window) { segments.push({text: text, window: window}); };
     if (!settings.detail) {
         if (windows.length) {
-            segments.push(quotaValue(windows[0].remaining, mode) + "%");
+            push(quotaValue(windows[0].remaining, mode) + "%", windows[0]);
             rendered = [windows[0]];
         }
     } else {
-        if (session) segments.push(laneLabel(session.minutes) + " " + quotaValue(session.remaining, mode) + "%");
-        if (weekly) segments.push(laneLabel(weekly.minutes) + " " + quotaValue(weekly.remaining, mode) + "%");
+        if (session) push(laneText(session, mode, settings, now, false), session);
+        if (weekly) push(laneText(weekly, mode, settings, now, true), weekly);
         // A provider's own quota can use neither cadence: Cursor bills on a monthly cycle beside a
         // weekly allowance, so every cadence it reports itself gets a lane.
         var extra = otherCadences(windows, [session, weekly]);
         extra.forEach(function(item) {
-            segments.push((laneLabel(item.minutes) || item.label) + " " + quotaValue(item.remaining, mode) + "%");
+            push(laneText(item, mode, settings, now, false), item);
         });
         rendered = [session, weekly].concat(extra);
     }
@@ -301,25 +315,135 @@ function laneSegments(entry, mode, options) {
         if (!settings.scopedCaps || !item.scoped || rendered.indexOf(item) !== -1) return;
         var prefix = modelCaps[entry.provider];
         if (!(prefix && item.key.indexOf(prefix) === 0) && !bindingScope(item, session, weekly, windows)) return;
-        segments.push(item.label.replace(/\s+only$/i, "") + " " + quotaValue(item.remaining, mode) + "%");
+        push(item.label.replace(/\s+only$/i, "") + " " + quotaValue(item.remaining, mode) + "%", item);
     });
     // Pace belongs to the weekly window, not to whichever lane is most constrained, and it stays
-    // last so the quota lanes read together. An unavailable pace gets no segment at all.
-    if (settings.detail && settings.pace !== false && weekly && paceDeltaText(weekly.paceDelta))
-        segments.push(paceDeltaText(weekly.paceDelta));
+    // last so the quota lanes read together. An unavailable pace gets no segment at all. With heat
+    // coloring on the tooltip spells the pace out instead, so the bar keeps one idea per lane.
+    if (settings.detail && settings.pace !== false && settings.heat !== true && weekly && paceDeltaText(weekly.paceDelta))
+        push(paceDeltaText(weekly.paceDelta), weekly);
     return segments;
+}
+
+// Burn-rate deficit of a window: the CLI's own deltaPercent when it has one, else the linear pace
+// its reset implies. A window with neither stays unmeasured rather than guessed.
+function paceDeltaOf(item, now) {
+    var delta = number(item.paceDelta);
+    if (delta !== null) return delta;
+    var reset = Date.parse(item.resetsAt);
+    if (!isFinite(reset) || !(item.minutes > 0)) return null;
+    var elapsed = Math.max(0, Math.min(1, 1 - (reset - now) / (item.minutes * 60000)));
+    return (100 - item.remaining) - elapsed * 100;
+}
+
+// Burn-rate stage of the window a segment renders, mirroring Core's UsagePace thresholds (6 and
+// 12). Null means no color, never calm.
+function heatLevel(item, now) {
+    var delta = paceDeltaOf(item, now);
+    return delta === null ? null : delta <= 0 ? 0 : delta <= 6 ? 1 : delta <= 12 ? 2 : 3;
+}
+
+// Straight-line pace for a window the CLI does not pace, such as a per-model cap: the elapsed
+// share of the window is the expected use, and the average rate so far projects when it empties.
+// Null when the CLI paces the window itself or the window has no usable reset.
+function linearPace(item, now) {
+    if (number(item.paceDelta) !== null) return null;
+    var reset = Date.parse(item.resetsAt);
+    if (!isFinite(reset) || reset <= now || !(item.minutes > 0)) return null;
+    var span = item.minutes * 60000;
+    // A reset further off than the window is long cannot belong to a window in progress.
+    if (reset - now > span) return null;
+    var elapsed = span - (reset - now);
+    var used = 100 - item.remaining;
+    var eta = "Lasts until reset";
+    if (used >= 100) eta = "Exhausted";
+    else if (used > 0 && elapsed > 0) {
+        var untilEmpty = (100 - used) * elapsed / used;
+        if (untilEmpty < reset - now) eta = "Runs out in " + shortDuration(untilEmpty / 1000);
+    }
+    return {expected: elapsed / span * 100, eta: eta};
+}
+
+// The tooltip line a warm or hot lane earns: the CLI's own pace summary with its pipe layout
+// swapped for the bar's separator, else what the straight-line pace implies.
+function paceDetail(item, now) {
+    if (item.pace) return item.pace.split(" | ").join(" · ");
+    var delta = paceDeltaOf(item, now);
+    if (delta === null) return "";
+    var linear = linearPace(item, now);
+    return Math.abs(Math.round(delta)) + "% in " + (delta > 0 ? "deficit" : "reserve") +
+        (linear ? " · " + linear.eta : "");
+}
+
+// The popup's per-window pace figure: a quota that outlasts its reset says so, else the CLI's
+// own estimate in the shared short form. Empty when the CLI offers neither.
+function etaText(pace) {
+    if (!pace) return "";
+    if (pace.willLastToReset === true) return "Lasts until reset";
+    var duration = shortDuration(pace.etaSeconds);
+    return duration === "" ? "" : "Runs out in " + duration;
 }
 
 // Share the same labels and display limit between text and logo adapters. `maxProviders` is
 // display only: the providers it hides are still polled, listed in the popup and notified about.
 function barSegments(entries, mode, options) {
-    var limit = number((options || {}).maxProviders);
+    var settings = options || {};
+    var limit = number(settings.maxProviders);
     if (limit === null) limit = 2;
+    var now = number(settings.now);
+    if (now === null) now = Date.now();
+    var hot = settings.heat === true;
     return (limit > 0 ? entries.slice(0, limit) : entries).map(function(entry) {
-            var segments = laneSegments(entry, mode, options);
+            // A spent week locks the provider out until its reset, whatever the other lanes say; the
+            // adapter strikes it through and bolds that reset where the weekly lane already shows it.
+            // It belongs to pace coloring, so an upgrade leaves the bar unchanged until that is on.
+            // Only a general week locks the provider; a spent per-model cap leaves the rest usable.
+            // A reset already past means the next refresh brings the week back, so stop mourning it.
+            var weekly = tightest((entry.windows || []).filter(function(item) {
+                return !item.scoped && item.minutes === 10080;
+            }));
+            var weeklyReset = weekly ? Date.parse(weekly.resetsAt) : NaN;
+            var exhausted = hot && !!weekly && weekly.remaining === 0 && !(isFinite(weeklyReset) && weeklyReset <= now);
+            var segments = laneSegments(entry, mode, options, now);
+            // The tooltip line spells out what a warm color only gestures at, and ends with the
+            // reset the pace is measured against.
+            var lines = [];
+            var parts = segments.map(function(segment) {
+                var heat = hot ? heatLevel(segment.window, now) : null;
+                if (segment.window && (heat === 2 || heat === 3)) {
+                    var line = providerName(entry.provider) + " " + segment.text + " · " + paceDetail(segment.window, now);
+                    var countdown = shortCountdown(segment.window.resetsAt, now);
+                    if (countdown !== "") line += " · reset " + countdown;
+                    lines.push(line);
+                }
+                // The continuous delta lets the adapter shade within a stage; heat keeps the stage.
+                var part = {text: segment.text, heat: heat,
+                    delta: heat === null ? null : Math.round(paceDeltaOf(segment.window, now))};
+                // Name the lane that carries the revival countdown, since a session can show the same text.
+                if (exhausted && segment.window === weekly) part.revives = true;
+                return part;
+            });
+            // The logo speaks for the whole provider, so it takes the hottest general lane; a
+            // scoped pool must not redden the provider while it sits unused.
+            var laneHeat = null, laneDelta = null;
+            if (hot && !settings.detail) (entry.windows || []).forEach(function(item) {
+                if (item.scoped) return;
+                var delta = paceDeltaOf(item, now);
+                if (delta !== null && (laneDelta === null || delta > laneDelta)) laneDelta = delta;
+            });
+            if (laneDelta !== null) {
+                laneHeat = heatLevel({paceDelta: laneDelta}, now);
+                laneDelta = Math.round(laneDelta);
+            }
             return {provider: entry.provider,
                 tag: entry.provider === "codex" ? "CX" : entry.provider === "claude" ? "CL" : entry.provider,
-                text: segments.length ? segments.join(" · ") : "—"};
+                text: segments.length ? parts.map(function(part) { return part.text; }).join(" · ") : "—",
+                heat: laneHeat,
+                delta: laneDelta,
+                hint: lines.join("\n"),
+                exhausted: exhausted,
+                revives: exhausted ? shortCountdown(weekly.resetsAt, now) : "",
+                parts: parts};
         });
 }
 
@@ -329,14 +453,26 @@ function summary(entries, mode) {
     return label + (entries.length > shown.length ? "  +" + (entries.length - shown.length) : "");
 }
 
+// Compact d/h/m duration shared by the reset label and the pace countdowns: 3d 2h, 9h 4m or
+// 12m, minutes rounded up. Empty when the duration is unusable or already spent.
+function shortDuration(seconds) {
+    var minutes = Math.ceil(number(seconds) / 60);
+    if (!minutes || minutes <= 0) return "";
+    if (minutes < 60) return minutes + "m";
+    if (minutes < 1440) return Math.floor(minutes / 60) + "h " + minutes % 60 + "m";
+    return Math.floor(minutes / 1440) + "d " + Math.floor(minutes % 1440 / 60) + "h";
+}
+
+function shortCountdown(value, now) {
+    var timestamp = typeof value === "number" ? value : Date.parse(value);
+    return isFinite(timestamp) ? shortDuration((timestamp - now) / 1000) : "";
+}
+
 function resetLabel(value, now) {
     var timestamp = Date.parse(value);
     if (!isFinite(timestamp)) return "Reset time unavailable";
-    var minutes = Math.ceil((timestamp - now) / 60000);
-    if (minutes <= 0) return "Reset due · refresh to update";
-    if (minutes < 60) return "Resets in " + minutes + "m";
-    if (minutes < 1440) return "Resets in " + Math.floor(minutes / 60) + "h " + minutes % 60 + "m";
-    return "Resets in " + Math.floor(minutes / 1440) + "d " + Math.floor(minutes % 1440 / 60) + "h";
+    var countdown = shortDuration((timestamp - now) / 1000);
+    return countdown === "" ? "Reset due · refresh to update" : "Resets in " + countdown;
 }
 
 function providerName(id) {

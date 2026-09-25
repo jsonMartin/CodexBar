@@ -11,8 +11,8 @@ test('bar entries preserve compact summary quotas, order, privacy and the two-en
         {provider: 'acme', usage: {primary: {usedPercent: 20}}},
         {provider: 'claude', usage: {primary: {usedPercent: 30}}}]), true);
     assert.deepEqual(JSON.parse(JSON.stringify(model.barSegments(rows, 'remaining'))), [
-        {provider: 'codex', tag: 'CX', text: '90%'},
-        {provider: 'acme', tag: 'acme', text: '80%'}]);
+        {provider: 'codex', tag: 'CX', text: '90%', heat: null, delta: null, hint: '', exhausted: false, revives: '', parts: [{text: '90%', heat: null, delta: null}]},
+        {provider: 'acme', tag: 'acme', text: '80%', heat: null, delta: null, hint: '', exhausted: false, revives: '', parts: [{text: '80%', heat: null, delta: null}]}]);
     assert.equal(model.summary(rows, 'remaining'), 'CX 90%  ·  acme 80%  +1');
     assert.deepEqual([...model.barSegments(rows, 'used').map(segment => segment.text)], ['10%', '20%']);
     assert.equal(model.summary(rows, 'used'), 'CX 10%  ·  acme 20%  +1');
@@ -23,7 +23,7 @@ test('bar entries retain unavailable quotas and handle empty or single-provider 
     assert.equal(model.summary([]), '');
     const rows = model.rows(JSON.stringify([{provider: 'claude', error: {message: 'private error'}}]));
     assert.deepEqual(JSON.parse(JSON.stringify(model.barSegments(rows))), [
-        {provider: 'claude', tag: 'CL', text: '—'}]);
+        {provider: 'claude', tag: 'CL', text: '—', heat: null, delta: null, hint: '', exhausted: false, revives: '', parts: []}]);
     assert.equal(model.summary(rows), 'CL —');
 });
 test('quota is clamped, missing quota stays unknown', () => {
@@ -369,7 +369,8 @@ test('extra rate windows are appended after the standard lanes so the real weekl
         ['primary', 'secondary', 'extra:claude-weekly-scoped-fable']);
     assert.deepEqual({...row.windows[2]},
         {key: 'extra:claude-weekly-scoped-fable', label: 'Fable only', minutes: 10080, remaining: 7,
-            resetsAt: '2026-09-21T09:00:00Z', pace: '', paceDelta: null, scoped: true});
+            resetsAt: '2026-09-21T09:00:00Z', pace: '', paceDelta: null, expected: null, eta: '',
+            scoped: true});
     assert.equal(row.error, '');
 });
 
@@ -522,6 +523,108 @@ test('the pace preference controls the bar pace as it controls the native cards'
         usage: {secondary: weekly}, pace: {secondary: {deltaPercent: 14}}}]));
     assert.equal(detailedLabel(rows, 'remaining', {pace: true}), '7D 61% · +14%');
     assert.equal(detailedLabel(rows, 'remaining', {pace: false}), '7D 61%');
+});
+
+const heatStages = delta => [...model.barSegments(lanes({secondary: weekly}, {secondary: {deltaPercent: delta}}),
+    'remaining', {detail: true, heat: true})[0].parts.map(part => part.heat)];
+
+test('heat follows the pace stages at the boundaries', () => {
+    assert.deepEqual(heatStages(-8), [0]);
+    assert.deepEqual(heatStages(0), [0]);
+    assert.deepEqual(heatStages(6), [1]);
+    assert.deepEqual(heatStages(6.5), [2]);
+    assert.deepEqual(heatStages(12), [2]);
+    assert.deepEqual(heatStages(13), [3]);
+    const shown = model.barSegments(lanes({primary: session, secondary: weekly},
+        {secondary: {deltaPercent: 14}}), 'remaining', {detail: true, heat: true})[0];
+    assert.equal(shown.text, shown.parts.map(part => part.text).join(' · '));
+});
+
+test('a scoped cap without pace derives its heat from the reset its window implies', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude',
+        usage: {secondary: weekly, extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 93, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'}}]},
+        pace: {secondary: {deltaPercent: -8}}}]));
+    const options = {detail: true, scopedCaps: true, heat: true};
+    const parts = model.barSegments(rows, 'remaining', {...options, now: Date.parse('2030-01-01T00:00:00Z')})[0].parts;
+    assert.deepEqual([...parts.map(part => part.text)], ['7D 61%', 'Fable 7%']);
+    // Six days of the week have elapsed, so the cap's 93% used burns ahead of its share while the
+    // paced weekly lane stays calm.
+    assert.deepEqual([...parts.map(part => part.heat)], [0, 2]);
+    // Past the reset the elapsed share clamps to the whole window, so the leftover quota reads calm.
+    const late = model.barSegments(rows, 'remaining', {...options, now: Date.parse('2030-01-05T00:00:00Z')})[0].parts;
+    assert.equal(late[1].heat, 0);
+});
+
+test('heat stays null when neither pace nor a usable reset can imply one', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'codex', usage: {
+        primary: {usedPercent: 10, windowMinutes: 300},
+        secondary: {usedPercent: 39, windowMinutes: 10080, resetsAt: 'nonsense'}}}]));
+    assert.deepEqual([...model.barSegments(rows, 'remaining', {detail: true, heat: true})[0].parts.map(part => part.heat)],
+        [null, null]);
+    const noDuration = model.rows(JSON.stringify([{provider: 'codex', usage: {
+        primary: {usedPercent: 10, resetsAt: '2030-01-01T00:00:00Z'}}}]));
+    assert.deepEqual([...model.barSegments(noDuration, 'remaining', {detail: true, heat: true})[0].parts.map(part => part.heat)],
+        [null]);
+});
+
+test('compact heat colors the leading window, and the preference off keeps every part plain', () => {
+    const rows = lanes({primary: session, secondary: weekly}, {primary: {deltaPercent: 13}});
+    assert.deepEqual(JSON.parse(JSON.stringify(model.barSegments(rows, 'remaining', {heat: true})[0].parts)),
+        [{text: '37%', heat: 3, delta: 13}]);
+    for (const heat of [undefined, false]) {
+        const parts = model.barSegments(rows, 'remaining', {heat})[0].parts;
+        assert.deepEqual([...parts.map(part => part.heat)], [null]);
+        assert.equal(model.barSegments(rows, 'remaining', {heat})[0].text, '37%');
+    }
+});
+
+test('heat moves the weekly pace figure from the bar into the tooltip hint', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: {usedPercent: 20, windowMinutes: 300, resetsAt: '2030-01-01T02:30:00Z'},
+        secondary: {usedPercent: 72, windowMinutes: 10080, resetsAt: '2030-01-08T00:00:00Z'}},
+        pace: {secondary: {deltaPercent: 22,
+            summary: '22% in deficit | Expected 50% used | Runs out in 1d 8h'}}}]));
+    const now = Date.parse('2030-01-01T00:00:00Z');
+    const on = model.barSegments(rows, 'remaining', {detail: true, heat: true, now})[0];
+    assert.deepEqual([...on.parts.map(part => part.text)], ['5H 80%', '7D 28%']);
+    assert.equal(on.hint, 'Claude 7D 28% · 22% in deficit · Expected 50% used · Runs out in 1d 8h · reset 7d 0h');
+    const off = model.barSegments(rows, 'remaining', {detail: true, now})[0];
+    assert.deepEqual([...off.parts.map(part => part.text)], ['5H 80%', '7D 28%', '+22%']);
+    assert.equal(off.hint, '');
+    assert.equal(off.heat, null);
+});
+
+test('a warm lane without a CLI summary reports the deficit its reset implies', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {secondary: weekly,
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 93, windowMinutes: 10080, resetsAt: '2030-01-02T00:00:00Z'}}]},
+        pace: {secondary: {deltaPercent: -8}}}]));
+    const options = {detail: true, scopedCaps: true, heat: true};
+    const entry = model.barSegments(rows, 'remaining', {...options, now: Date.parse('2030-01-01T00:00:00Z')})[0];
+    // Six of the cap's seven days have passed, so 93% used runs 7 points past its elapsed share,
+    // and at that average rate the last 7% lasts 7 × 144h / 93 ≈ 10h 51m, inside the reset.
+    assert.equal(entry.hint, 'Claude Fable 7% · 7% in deficit · Runs out in 10h 51m · reset 1d 0h');
+    // Once no lane runs warm the tooltip falls silent again.
+    const calm = model.barSegments(rows, 'remaining', {...options, now: Date.parse('2030-01-05T00:00:00Z')})[0];
+    assert.equal(calm.hint, '');
+});
+
+test('the compact logo takes the entry heat from the hottest non-scoped lane', () => {
+    const now = Date.parse('2030-01-01T00:00:00Z');
+    const rows = used => model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: {usedPercent: used, windowMinutes: 300, resetsAt: '2030-01-01T02:30:00Z'},
+        secondary: {usedPercent: 0, windowMinutes: 10080, resetsAt: '2030-01-08T00:00:00Z'},
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 100, windowMinutes: 10080, resetsAt: '2030-01-01T12:00:00Z'}}]}}]));
+    const options = {heat: true, now};
+    // Half the session has elapsed, so 50% used is exactly on pace, and an exhausted scoped pool
+    // must not redden the provider on its own.
+    assert.equal(model.barSegments(rows(50), 'remaining', options)[0].heat, 0);
+    assert.equal(model.barSegments(rows(63), 'remaining', options)[0].heat, 3, 'the hottest general lane wins');
+    assert.equal(model.barSegments(rows(63), 'remaining', {...options, detail: true})[0].heat, null,
+        'detailed mode colors lanes, not the logo');
+    assert.equal(model.barSegments(rows(63), 'remaining', {now})[0].heat, null, 'heat off leaves the logo alone');
 });
 
 test('a synthetic placeholder session is not a full session', () => {
@@ -785,4 +888,171 @@ test('a promoted compact fallback is the quota its per-model extras must out-bin
         {id: 'image-model', title: 'Image model', usageKnown: true,
             window: {usedPercent: 95, windowMinutes: null}}]}}]));
     assert.equal(detailedLabel(tighter, 'remaining', {scopedCaps: true}), 'Model A 36% · Image model 5%');
+});
+
+test('short durations round minutes up and stay empty once spent or unusable', () => {
+    assert.equal(model.shortDuration(3 * 86400 + 2 * 3600), '3d 2h');
+    assert.equal(model.shortDuration(9 * 3600 + 4 * 60), '9h 4m');
+    assert.equal(model.shortDuration(12 * 60), '12m');
+    assert.equal(model.shortDuration(601), '11m');
+    for (const value of [null, undefined, 'nope', Infinity, -1, 0]) assert.equal(model.shortDuration(value), '');
+    const now = Date.parse('2026-01-01T00:00:00Z');
+    assert.equal(model.shortCountdown('bad', now), '');
+    assert.equal(model.shortCountdown('2025-12-31T23:00:00Z', now), '');
+    assert.equal(model.shortCountdown('2026-01-01T01:30:00Z', now), '1h 30m');
+    assert.equal(model.shortCountdown(now + 12 * 60000, now), '12m');
+    assert.equal(model.shortCountdown(now + 3 * 86400000 + 2 * 3600000, now), '3d 2h');
+    // resetLabel keeps its own labels while sharing the arithmetic.
+    assert.equal(model.resetLabel('2026-01-01T01:30:00Z', now), 'Resets in 1h 30m');
+    assert.equal(model.resetLabel('2026-01-01T00:12:00Z', now), 'Resets in 12m');
+    assert.equal(model.resetLabel('2025-12-31T23:00:00Z', now), 'Reset due · refresh to update');
+    assert.equal(model.resetLabel('bad', now), 'Reset time unavailable');
+});
+
+test('positional windows carry the CLI pace expectation and eta, scoped extras none', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'codex', usage: {
+        primary: {usedPercent: 63, windowMinutes: 300, resetsAt: '2030-01-01T05:00:00Z'},
+        secondary: {usedPercent: 39, windowMinutes: 10080, resetsAt: '2030-01-08T00:00:00Z'}},
+        pace: {primary: {deltaPercent: 22, expectedUsedPercent: 50, etaSeconds: 129600},
+               secondary: {deltaPercent: -8, willLastToReset: true}}}]));
+    const windows = rows[0].windows;
+    assert.equal(windows[0].expected, 50);
+    assert.equal(windows[0].eta, 'Runs out in 1d 12h');
+    assert.equal(windows[1].expected, null);
+    assert.equal(windows[1].eta, 'Lasts until reset');
+    // An eta the CLI cannot compute stays empty rather than printing a bare prefix.
+    const vague = model.rows(JSON.stringify([{provider: 'codex',
+        usage: {primary: {usedPercent: 63, windowMinutes: 300, resetsAt: '2030-01-01T05:00:00Z'}},
+        pace: {primary: {deltaPercent: 22, etaSeconds: 'soon'}}}]));
+    assert.equal(vague[0].windows[0].eta, '');
+    assert.equal(vague[0].windows[0].expected, null);
+    const unmeasured = model.rows(JSON.stringify([{provider: 'claude', usage: {extraRateWindows: [
+        {id: 'scoped', title: 'Fable only', window: {usedPercent: 93, windowMinutes: 10080}}]}}]));
+    assert.equal(unmeasured[0].windows[0].expected, null);
+    assert.equal(unmeasured[0].windows[0].eta, '');
+});
+
+test('a warm hint line ends with the reset the pace is measured against', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: {usedPercent: 20, windowMinutes: 300, resetsAt: '2030-01-01T02:30:00Z'},
+        secondary: {usedPercent: 72, windowMinutes: 10080, resetsAt: '2030-01-04T12:00:00Z'}},
+        pace: {secondary: {deltaPercent: 22, summary: '22% in deficit'}}}]));
+    const entry = model.barSegments(rows, 'remaining',
+        {detail: true, heat: true, now: Date.parse('2030-01-01T00:00:00Z')})[0];
+    assert.equal(entry.hint, 'Claude 7D 28% · 22% in deficit · reset 3d 12h');
+    // A window past its reset contributes no countdown to the line.
+    const overdue = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        secondary: {usedPercent: 72, windowMinutes: 10080, resetsAt: '2020-01-01T00:00:00Z'}},
+        pace: {secondary: {deltaPercent: 22, summary: '22% in deficit'}}}]));
+    const hint = model.barSegments(overdue, 'remaining',
+        {detail: true, heat: true, now: Date.parse('2030-01-01T00:00:00Z')})[0].hint;
+    assert.equal(hint, 'Claude 7D 28% · 22% in deficit');
+});
+
+test('a session lane shows its reset only while heat marks it over pace', () => {
+    const now = Date.parse('2030-01-01T00:00:00Z');
+    const usage = {primary: {usedPercent: 100, windowMinutes: 300, resetsAt: '2030-01-01T00:37:00Z'},
+        secondary: {usedPercent: 40, windowMinutes: 10080, resetsAt: '2030-01-03T00:00:00Z'},
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 90, windowMinutes: 10080, resetsAt: '2030-01-03T00:00:00Z'}}]};
+    const hot = model.rows(JSON.stringify([{provider: 'claude', usage,
+        pace: {primary: {deltaPercent: 20}, secondary: {deltaPercent: -5}}}]));
+    const texts = options => [...model.barSegments(hot, 'remaining', {detail: true, now, ...options})[0].parts
+        .map(part => part.text)];
+    assert.deepEqual(texts({heat: true, reset: true}), ['5H 0% (37m)', '7D 60% (2d 0h)']);
+    // Without heat nothing says the session is over pace, so only the weekly lane keeps its reset,
+    // and the weekly pace figure stays in the bar as it always has.
+    assert.deepEqual(texts({reset: true}), ['5H 0%', '7D 60% (2d 0h)', '-5%']);
+    assert.deepEqual(texts({heat: true}), ['5H 0%', '7D 60%']);
+    // A scoped cap never gets a countdown, however hot.
+    assert.deepEqual(texts({heat: true, reset: true, scopedCaps: true}), ['5H 0% (37m)', '7D 60% (2d 0h)', 'Fable 10%']);
+    const calm = model.rows(JSON.stringify([{provider: 'claude', usage: {primary: usage.primary},
+        pace: {primary: {deltaPercent: 3}}}]));
+    assert.deepEqual([...model.barSegments(calm, 'remaining', {detail: true, heat: true, reset: true, now})[0].parts
+        .map(part => part.text)], ['5H 0%']);
+});
+
+test('the weekly reset countdown is an opt-in suffix on the detailed lane only', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'codex',
+        usage: {primary: session, secondary: weekly}, pace: {secondary: {deltaPercent: 14}}}]));
+    const now = Date.parse('2030-01-01T00:00:00Z');
+    assert.equal(detailedLabel(rows, 'remaining', {reset: true, now}), '5H 37% · 7D 61% (1d 0h) · +14%');
+    assert.equal(detailedLabel(rows, 'remaining', {now}), '5H 37% · 7D 61% · +14%');
+    assert.equal(compactLabel(rows, 'remaining', {reset: true, now}), '37%');
+    assert.equal(model.summary(rows, 'remaining'), 'CX 37%');
+    // A weekly window without a usable reset keeps the bare percentage.
+    const timeless = model.rows(JSON.stringify([{provider: 'codex',
+        usage: {primary: session, secondary: {usedPercent: 39, windowMinutes: 10080}}}]));
+    assert.equal(detailedLabel(timeless, 'remaining', {reset: true, now}), '5H 37% · 7D 61%');
+    const spent = model.rows(JSON.stringify([{provider: 'codex', usage: {secondary: {
+        usedPercent: 39, windowMinutes: 10080, resetsAt: '2020-01-01T00:00:00Z'}}}]));
+    assert.equal(detailedLabel(spent, 'remaining', {reset: true, now}), '7D 61%');
+    // The suffix rides on the segment, so the lane's own heat is unchanged.
+    const parts = model.barSegments(rows, 'remaining', {detail: true, heat: true, reset: true, now})[0].parts;
+    assert.deepEqual([...parts.map(part => part.text)], ['5H 37%', '7D 61% (1d 0h)']);
+    assert.deepEqual([...parts.map(part => part.heat)], [0, 3]);
+});
+
+test('a window the CLI does not pace gets a straight-line expected use and run-out time', () => {
+    const now = Date.parse('2030-01-01T00:00:00Z');
+    // A seven-day cap resetting in one day: six days, 6/7 of the window, have elapsed.
+    const cap = remaining => ({minutes: 10080, remaining, resetsAt: '2030-01-02T00:00:00Z', paceDelta: null});
+    const over = model.linearPace(cap(7), now);
+    assert.equal(Math.round(over.expected), 86);
+    assert.equal(over.eta, 'Runs out in 10h 51m');
+    assert.equal(model.linearPace(cap(50), now).eta, 'Lasts until reset');
+    assert.equal(model.linearPace(cap(100), now).eta, 'Lasts until reset');
+    assert.equal(model.linearPace(cap(0), now).eta, 'Exhausted');
+    // The CLI's own pace wins, and a window without a future reset or length has none.
+    assert.equal(model.linearPace({...cap(7), paceDelta: 4}, now), null);
+    assert.equal(model.linearPace({...cap(7), resetsAt: '2029-12-31T00:00:00Z'}, now), null);
+    assert.equal(model.linearPace({...cap(7), resetsAt: 'soon'}, now), null);
+    assert.equal(model.linearPace({...cap(7), minutes: 0}, now), null);
+});
+
+test('compact mode publishes the hottest general lane\'s delta for the logo, never a scoped pool\'s', () => {
+    const rows = model.rows(JSON.stringify([{provider: 'claude', usage: {primary: session, secondary: weekly,
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 99, windowMinutes: 10080, resetsAt: '2030-01-07T00:00:00Z'}}]},
+        pace: {primary: {deltaPercent: -20}, secondary: {deltaPercent: 9.4}}}]));
+    const now = Date.parse('2030-01-01T00:00:00Z');
+    const entry = model.barSegments(rows, 'remaining', {heat: true, now})[0];
+    assert.equal(entry.delta, 9);
+    assert.equal(entry.heat, 2);
+    assert.equal(model.barSegments(rows, 'remaining', {heat: true, detail: true, now})[0].delta, null);
+    assert.equal(model.barSegments(rows, 'remaining', {now})[0].delta, null);
+});
+test('a spent weekly quota marks the provider exhausted, a spent session alone does not', () => {
+    const rows = model.rows(JSON.stringify([
+        {provider: 'claude', usage: {primary: {usedPercent: 40, windowMinutes: 300}, secondary: {usedPercent: 100, windowMinutes: 10080}}},
+        {provider: 'codex', usage: {primary: {usedPercent: 100, windowMinutes: 300}, secondary: {usedPercent: 60, windowMinutes: 10080}}}]));
+    assert.deepEqual([...model.barSegments(rows, 'remaining', {heat: true}).map(entry => entry.exhausted)], [true, false]);
+    assert.deepEqual([...model.barSegments(rows, 'remaining').map(entry => entry.exhausted)], [false, false],
+        'without pace coloring a spent provider draws as before');
+    const now = Date.parse('2026-09-24T00:00:00Z');
+    const reset = new Date(now + (44 * 60 + 5) * 60000).toISOString();
+    const spent = model.rows(JSON.stringify([{provider: 'claude', usage: {
+        primary: {usedPercent: 40, windowMinutes: 300, resetsAt: new Date(now + 2 * 3600000).toISOString()},
+        secondary: {usedPercent: 100, windowMinutes: 10080, resetsAt: reset}}}]));
+    const [entry] = model.barSegments(spent, 'remaining', {detail: true, reset: true, heat: true, now});
+    assert.equal(entry.revives, '1d 20h');
+    assert.equal(entry.text, '5H 60% · 7D 0% (1d 20h)');
+});
+test('only a live general week marks a provider exhausted, and only its own lane carries the countdown', () => {
+    const now = Date.parse('2026-09-24T00:00:00Z');
+    const at = minutes => new Date(now + minutes * 60000).toISOString();
+    const exhausted = usage => model.barSegments(model.rows(JSON.stringify([{provider: 'claude', usage}])),
+        'remaining', {detail: true, reset: true, heat: true, now})[0];
+    // A spent per-model cap beside a healthy session leaves the rest of the provider usable.
+    assert.equal(exhausted({primary: {usedPercent: 10, windowMinutes: 300, resetsAt: at(120)},
+        extraRateWindows: [{id: 'claude-weekly-scoped-fable', title: 'Fable only',
+            window: {usedPercent: 100, windowMinutes: 10080, resetsAt: at(3000)}}]}).exhausted, false);
+    // A week whose reset has already passed is about to come back.
+    assert.equal(exhausted({secondary: {usedPercent: 100, windowMinutes: 10080, resetsAt: at(-1)}}).exhausted, false);
+    // A session over pace can show the same countdown text; only the weekly lane is the revival.
+    const entry = exhausted({primary: {usedPercent: 99, windowMinutes: 300, resetsAt: at(60)},
+        secondary: {usedPercent: 100, windowMinutes: 10080, resetsAt: at(60)}});
+    assert.equal(entry.exhausted, true);
+    assert.deepEqual([...entry.parts].map(part => [part.text, part.revives === true]),
+        [['5H 1% (1h 0m)', false], ['7D 0% (1h 0m)', true]]);
 });

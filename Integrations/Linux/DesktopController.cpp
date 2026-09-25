@@ -41,7 +41,7 @@ void stop(QProcess &process) {
 }
 
 DesktopController::DesktopController(const QString &cliOverride, QObject *parent) : QObject(parent) {
-    m_usageModel = module(m_engine, ":/Shared/Usage.js", "rows:rows, costs:costs, command:command, summary:summary, barSegments:barSegments, resetText:resetText");
+    m_usageModel = module(m_engine, ":/Shared/Usage.js", "rows:rows, costs:costs, command:command, summary:summary, barSegments:barSegments, resetText:resetText, heatLevel:heatLevel, paceDeltaOf:paceDeltaOf, linearPace:linearPace");
     m_noticeModel = module(m_engine, ":/Shared/Notifications.js", "transition:transition, summary:summary");
     m_noticeState = m_engine.newObject();
     loadSettings(cliOverride);
@@ -94,12 +94,23 @@ bool DesktopController::validate(QVariantMap &values) {
         unique.append(id);
     }
     values["providerOrder"] = unique;
+    // Output names come from the widget's own screen (DP-1, HDMI-A-1), never from a shell command.
+    const auto outputs = values.value("hiddenOutputs").toStringList();
+    QStringList hidden;
+    for (const auto &name : outputs) {
+        if (!QRegularExpression("^[A-Za-z0-9._-]{1,64}$").match(name).hasMatch()) {
+            m_configError = "The hidden monitor list contains an invalid output name."; return false;
+        }
+        if (!hidden.contains(name)) hidden.append(name);
+    }
+    if (hidden.size() > 16) { m_configError = "Hide CodexBar on at most 16 monitors."; return false; }
+    values["hiddenOutputs"] = hidden;
     if (!QStringList{"remaining", "used"}.contains(values.value("quotaDisplay").toString()) ||
         !QStringList{"countdown", "absolute", "both"}.contains(values.value("resetDisplay").toString()) ||
         !QStringList{"meters", "icon"}.contains(values.value("trayStyle").toString())) {
         m_configError = "Unsupported display preference."; return false;
     }
-    for (const auto &key : {"allAccounts", "showIdentity", "showCosts", "showStatus", "notifications", "showTray", "refreshOnOpen", "showPace", "showBarDetail", "showScopedCaps", "warningColors", "followOmarchyTheme"})
+    for (const auto &key : {"allAccounts", "showIdentity", "showCosts", "showStatus", "notifications", "showTray", "refreshOnOpen", "showPace", "showBarDetail", "showScopedCaps", "showHeat", "showBarReset", "warningColors", "followOmarchyTheme"})
         values[key] = values.value(key).toBool();
     return true;
 }
@@ -107,9 +118,9 @@ bool DesktopController::validate(QVariantMap &values) {
 void DesktopController::loadSettings(const QString &cliOverride) {
     m_settings = {{"executable", "codexbar"}, {"provider", "codex"}, {"source", "auto"},
         {"refreshSeconds", 300}, {"accountIndex", 0}, {"notifyThreshold", 10}, {"allAccounts", false},
-        {"showIdentity", false}, {"showCosts", true}, {"showStatus", true}, {"notifications", false}, {"showTray", true}, {"refreshOnOpen", false}, {"providerOrder", QStringList{}},
+        {"showIdentity", false}, {"showCosts", true}, {"showStatus", true}, {"notifications", false}, {"showTray", true}, {"refreshOnOpen", false}, {"providerOrder", QStringList{}}, {"hiddenOutputs", QStringList{}},
         {"quotaDisplay", "remaining"}, {"resetDisplay", "countdown"}, {"showPace", true},
-        {"showBarDetail", false}, {"showScopedCaps", false}, {"barProviders", 2},
+        {"showBarDetail", false}, {"showScopedCaps", false}, {"showHeat", false}, {"showBarReset", false}, {"barProviders", 2},
         {"warningColors", true}, {"trayStyle", "meters"}, {"followOmarchyTheme", false}};
     m_configPath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/codexbar/linux.json";
     QFile file(m_configPath);
@@ -304,13 +315,16 @@ void DesktopController::updateLabels() {
     options.setProperty("detail", m_settings.value("showBarDetail").toBool());
     options.setProperty("pace", m_settings.value("showPace").toBool());
     options.setProperty("scopedCaps", m_settings.value("showScopedCaps").toBool());
+    options.setProperty("heat", m_settings.value("showHeat").toBool());
+    options.setProperty("reset", m_settings.value("showBarReset").toBool());
     options.setProperty("maxProviders", m_settings.value("barProviders").toInt());
     m_barEntries = QJsonArray::fromVariantList(
         call(m_usageModel, "barSegments", {rows, mode, options}).toVariant().toList());
 }
 
-QJsonObject DesktopController::snapshot() const {
+QJsonObject DesktopController::snapshot() {
     static const auto extraKeySalt = QUuid::createUuid().toRfc4122();
+    const auto now = double(QDateTime::currentMSecsSinceEpoch());
     QJsonArray compact;
     for (const auto &entry : m_entries) {
         auto row = entry.toMap();
@@ -325,12 +339,46 @@ QJsonObject DesktopController::snapshot() const {
                     QCryptographicHash::hash(extraKeySalt + identity.toUtf8(), QCryptographicHash::Sha256).toHex());
             }
             const auto remaining = window.value("remaining").toDouble();
-            window["displayValue"] = m_settings.value("quotaDisplay") == "used" ? 100 - remaining : remaining;
-            window["displaySuffix"] = m_settings.value("quotaDisplay") == "used" ? "used" : "left";
+            const bool usedMode = m_settings.value("quotaDisplay") == "used";
+            window["displayValue"] = usedMode ? 100 - remaining : remaining;
+            window["displaySuffix"] = usedMode ? "used" : "left";
+            // A reset that has passed leaves the CLI's pace describing an elapsed window: blank it
+            // rather than printing "Reset due" beside "63% in reserve · Expected 100% used". The
+            // preference blanks the rest.
+            const auto reset = QDateTime::fromString(window.value("resetsAt").toString(), Qt::ISODate);
+            const bool stalePace = reset.isValid() && reset <= QDateTime::fromMSecsSinceEpoch(now);
+            // The CLI paces only positional windows; a per-model cap gets the straight-line pace its
+            // own reset implies, so the popup draws it like any other lane.
+            if (window.value("expected").isNull()) {
+                const auto linear = call(m_usageModel, "linearPace", {m_engine.toScriptValue(window), now});
+                if (linear.isObject()) {
+                    window["expected"] = linear.property("expected").toNumber();
+                    window["eta"] = linear.property("eta").toString();
+                }
+            }
+            if (stalePace || !m_settings.value("showPace").toBool()) {
+                window["pace"] = ""; window["eta"] = ""; window["expected"] = QVariant();
+            }
+            const auto expected = window.value("expected");
+            // JS null arrives as a valid QVariant holding nullptr, whose toDouble() is 0.
+            window["expectedDisplay"] = expected.isValid() && !expected.isNull()
+                ? (usedMode ? expected.toDouble() : 100 - expected.toDouble()) : QVariant();
             window["warning"] = m_settings.value("warningColors").toBool() && remaining <= m_settings.value("notifyThreshold").toInt();
+            // The popup warms the gap and eta with the same stage the bar colors, so it asks the
+            // same model; a stale window's pace is gone and its stage with it.
+            window["heat"] = QVariant(); window["delta"] = QVariant();
+            if (m_settings.value("showHeat").toBool() && !stalePace) {
+                const auto level = call(m_usageModel, "heatLevel", {m_engine.toScriptValue(window), now});
+                if (level.isNumber()) window["heat"] = level.toInt();
+            }
+            // The popup's "N% over pace" belongs to Show pace; heat only decides whether it is colored.
+            if (m_settings.value("showPace").toBool() && !stalePace) {
+                const auto delta = call(m_usageModel, "paceDeltaOf", {m_engine.toScriptValue(window), now});
+                if (delta.isNumber()) window["delta"] = qRound(delta.toNumber());
+            }
             // This model contains no identity; display fields keep adapters consistent with native windows.
             window["resetText"] = call(m_usageModel, "resetText",
-                {window.value("resetsAt").toString(), double(QDateTime::currentMSecsSinceEpoch()), m_settings.value("resetDisplay").toString()}).toString();
+                {window.value("resetsAt").toString(), now, m_settings.value("resetDisplay").toString()}).toString();
             windows.append(QJsonObject::fromVariantMap(window));
         }
         compact.append(QJsonObject{{"provider", row.value("provider").toString()},
@@ -339,7 +387,8 @@ QJsonObject DesktopController::snapshot() const {
     }
     return {{"schemaVersion", 1}, {"pid", QCoreApplication::applicationPid()}, {"summary", m_summary}, {"barEntries", m_barEntries},
         {"entries", compact}, {"quotaDisplay", m_settings.value("quotaDisplay").toString()}, {"busy", busy()}, {"stale", stale()}, {"error", m_error},
-        {"updated", updated()}, {"costBusy", costBusy()}, {"costProviders", m_spending.size()}, {"costError", m_costError}};
+        {"updated", updated()}, {"costBusy", costBusy()}, {"costProviders", m_spending.size()}, {"costError", m_costError},
+        {"hiddenOutputs", QJsonArray::fromStringList(m_settings.value("hiddenOutputs").toStringList())}};
 }
 
 bool DesktopController::listen(const QString &socketPath) {

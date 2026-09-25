@@ -11,6 +11,7 @@ ApplicationWindow {
     property string feedback: ""
     property int section: 0
     property var providerOrder: []
+    property var hiddenOutputs: []
     function moveProvider(index, offset) {
         var order = providerOrder.slice();
         var item = order.splice(index, 1)[0]; order.splice(index + offset, 0, item);
@@ -29,7 +30,9 @@ ApplicationWindow {
         reset.currentIndex = reset.model.indexOf(s.resetDisplay);
         trayStyle.currentIndex = trayStyle.model.indexOf(s.trayStyle);
         theme.checked = s.followOmarchyTheme; pace.checked = s.showPace; warnings.checked = s.warningColors;
-        barDetail.checked = s.showBarDetail; scopedCaps.checked = s.showScopedCaps; barProviders.value = s.barProviders;
+        barDetail.checked = s.showBarDetail; scopedCaps.checked = s.showScopedCaps; heat.checked = s.showHeat;
+        barReset.checked = s.showBarReset; hiddenOutputs = s.hiddenOutputs.slice();
+        barProviders.value = s.barProviders;
         refreshOnOpen.checked = s.refreshOnOpen;
         tray.checked = s.showTray; executable.text = s.executable; feedback = "";
     }
@@ -168,6 +171,8 @@ ApplicationWindow {
                         Option { id: pace; text: "Show pace" }
                         Option { id: barDetail; text: "Show session, weekly and pace in the bar" }
                         Option { id: scopedCaps; text: "Show per-model caps in the bar" }
+                        Option { id: heat; text: "Color quotas by pace" }
+                        Option { id: barReset; text: "Show reset countdowns in the bar" }
                         RowLayout {
                             Layout.fillWidth: true
                             Label { text: "Providers in the bar"; Layout.fillWidth: true; wrapMode: Text.Wrap }
@@ -181,6 +186,24 @@ ApplicationWindow {
                             }
                         }
                         Option { id: warnings; text: "Highlight low quota" }
+                        Label { text: "Hide the Omarchy widget on"; Layout.fillWidth: true; wrapMode: Text.Wrap; visible: outputs.count > 1 }
+                        // Unchecking a monitor that is not connected keeps its entry, so a laptop
+                        // does not lose the choice made for a dock's display.
+                        Repeater {
+                            id: outputs
+                            model: Qt.application.screens.length > 1 ? Qt.application.screens : []
+                            Option {
+                                required property var modelData
+                                text: modelData.name
+                                // A click breaks a plain `checked:` binding; this one re-applies on reload.
+                                Binding on checked { value: window.hiddenOutputs.indexOf(modelData.name) !== -1 }
+                                onToggled: {
+                                    var next = window.hiddenOutputs.filter(function(name) { return name !== modelData.name; });
+                                    if (checked) next.push(modelData.name);
+                                    window.hiddenOutputs = next;
+                                }
+                            }
+                        }
                     }
                 }
                 GroupBox {
@@ -207,7 +230,9 @@ ApplicationWindow {
                         notifyThreshold: threshold.value, refreshSeconds: interval.value,
                         providerOrder: window.providerOrder, quotaDisplay: quota.currentText, resetDisplay: reset.currentText,
                         followOmarchyTheme: theme.checked, showPace: pace.checked,
-                        showBarDetail: barDetail.checked, showScopedCaps: scopedCaps.checked, barProviders: barProviders.value, warningColors: warnings.checked, trayStyle: trayStyle.currentText,
+                        showBarDetail: barDetail.checked, showScopedCaps: scopedCaps.checked, showHeat: heat.checked, hiddenOutputs: window.hiddenOutputs,
+                        showBarReset: barReset.checked,
+                        barProviders: barProviders.value, warningColors: warnings.checked, trayStyle: trayStyle.currentText,
                         refreshOnOpen: refreshOnOpen.checked, showTray: tray.checked, executable: executable.text.trim()})) window.feedback = "Settings saved";
                 }
             }

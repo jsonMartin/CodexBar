@@ -187,11 +187,16 @@ token-account editing and Mac managed profiles are not implemented here.
 
 Usage displays used or remaining quota, reset times, pace, credits, status, generic provider
 details, and charts. Unknown values stay unknown. Identity is hidden by default. Display preferences control reset countdowns,
-absolute times, pace visibility, the Omarchy bar's detail, per-model caps and provider
-count, and low-quota colors. The tray can show two quota
+absolute times, pace visibility, the Omarchy bar's detail, per-model caps, pace coloring,
+reset countdowns in the bar (weekly always, other lanes while over pace), the monitors the Omarchy widget hides on, provider count, and low-quota colors. Pace coloring moves the bar's
+pace figure to the hover tooltip and, in compact mode, tints each provider's
+logo by its hottest lane. The tray can show two quota
 meters for the first displayed provider or a static icon. Unknown meters remain
 empty tracks. The tooltip identifies the displayed providers and stale data.
-Omarchy's popup shares the quota/reset preferences.
+Omarchy's popup shares the quota/reset preferences. Each window's pace eta and
+the expected level the CLI reports for it are drawn there — the expected level
+as a ghost fill and a tick beside the real fill — and both are blanked once the
+window's reset has passed.
 
 Start-at-login changes apply immediately from Settings. Other preferences use Save.
 Omarchy installation enables theme following by default: colors are read from
@@ -243,7 +248,9 @@ with quota text already formatted for the used/remaining preference. Adapters ma
 replace the tag with a local logo and count additional `entries` as `+N`; older
 backends omit this field, so adapters should fall back to `summary`.
 The snapshot excludes account identity, CLI paths, and credential configuration.
-It includes display values and reset text for adapters. Adapters should check `schemaVersion`, tolerate
+It includes display values and reset text for adapters, and per-window pace
+fields (`eta`, `expected`/`expectedDisplay`, `heat`) for adapters that draw
+pace. Adapters should check `schemaVersion`, tolerate
 unknown fields, and treat a missing backend as unavailable.
 Measured provider-scoped windows follow the standard windows and require a stable, nonempty identifier.
 Their exported `key` values are opaque and remain stable for the lifetime of the backend process.
