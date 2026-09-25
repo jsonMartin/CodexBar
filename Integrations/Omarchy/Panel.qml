@@ -209,10 +209,12 @@ Panel {
                                 required property int index
                                 // Only a hot lane also gains weight.
                                 readonly property bool scorching: !!part.modelData && part.modelData.heat === 3
-                                readonly property string label: part.modelData && part.modelData.text ? part.modelData.text : ""
+                                readonly property string label: part.modelData && part.modelData.text
+                                    ? part.modelData.text : ""
                                 // A spent provider's weekly countdown stays bold under the strike, so
                                 // the time until it is back still reads at a glance.
-                                readonly property string reset: segment.dead && segment.modelData.revives &&
+                                readonly property string reset: segment.dead && part.modelData.revives === true &&
+                                    segment.modelData.revives &&
                                     part.label.endsWith(" (" + segment.modelData.revives + ")")
                                     ? " (" + segment.modelData.revives + ")" : ""
                                 // The joined text's own separator, so lanes stay distinct from the
@@ -228,8 +230,8 @@ Panel {
                                 }
                                 Text {
                                     text: part.label.slice(0, part.label.length - part.reset.length)
-                                    color: segment.dead ? button.foreground
-                                        : root.paceColor(part.modelData ? part.modelData.delta : null, button.foreground)
+                                    color: segment.dead ? button.foreground : root.paceColor(
+                                        part.modelData ? part.modelData.delta : null, button.foreground)
                                     font.bold: part.scorching && !segment.dead
                                     font.strikeout: segment.dead
                                     opacity: segment.dead ? 0.35 : 1

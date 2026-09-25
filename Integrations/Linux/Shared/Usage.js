@@ -395,9 +395,15 @@ function barSegments(entries, mode, options) {
     var hot = settings.heat === true;
     return (limit > 0 ? entries.slice(0, limit) : entries).map(function(entry) {
             // A spent week locks the provider out until its reset, whatever the other lanes say; the
-            // adapter bolds that reset where the weekly lane already shows it.
-            var weekly = weeklyWindow(entry.windows || []);
-            var exhausted = !!weekly && weekly.remaining === 0;
+            // adapter strikes it through and bolds that reset where the weekly lane already shows it.
+            // It belongs to pace coloring, so an upgrade leaves the bar unchanged until that is on.
+            // Only a general week locks the provider; a spent per-model cap leaves the rest usable.
+            // A reset already past means the next refresh brings the week back, so stop mourning it.
+            var weekly = tightest((entry.windows || []).filter(function(item) {
+                return !item.scoped && item.minutes === 10080;
+            }));
+            var weeklyReset = weekly ? Date.parse(weekly.resetsAt) : NaN;
+            var exhausted = hot && !!weekly && weekly.remaining === 0 && !(isFinite(weeklyReset) && weeklyReset <= now);
             var segments = laneSegments(entry, mode, options, now);
             // The tooltip line spells out what a warm color only gestures at, and ends with the
             // reset the pace is measured against.
@@ -411,8 +417,11 @@ function barSegments(entries, mode, options) {
                     lines.push(line);
                 }
                 // The continuous delta lets the adapter shade within a stage; heat keeps the stage.
-                return {text: segment.text, heat: heat,
+                var part = {text: segment.text, heat: heat,
                     delta: heat === null ? null : Math.round(paceDeltaOf(segment.window, now))};
+                // Name the lane that carries the revival countdown, since a session can show the same text.
+                if (exhausted && segment.window === weekly) part.revives = true;
+                return part;
             });
             // The logo speaks for the whole provider, so it takes the hottest general lane; a
             // scoped pool must not redden the provider while it sits unused.
