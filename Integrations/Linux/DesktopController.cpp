@@ -94,6 +94,17 @@ bool DesktopController::validate(QVariantMap &values) {
         unique.append(id);
     }
     values["providerOrder"] = unique;
+    // Output names come from the widget's own screen (DP-1, HDMI-A-1), never from a shell command.
+    const auto outputs = values.value("hiddenOutputs").toStringList();
+    QStringList hidden;
+    for (const auto &name : outputs) {
+        if (!QRegularExpression("^[A-Za-z0-9._-]{1,64}$").match(name).hasMatch()) {
+            m_configError = "The hidden monitor list contains an invalid output name."; return false;
+        }
+        if (!hidden.contains(name)) hidden.append(name);
+    }
+    if (hidden.size() > 16) { m_configError = "Hide CodexBar on at most 16 monitors."; return false; }
+    values["hiddenOutputs"] = hidden;
     if (!QStringList{"remaining", "used"}.contains(values.value("quotaDisplay").toString()) ||
         !QStringList{"countdown", "absolute", "both"}.contains(values.value("resetDisplay").toString()) ||
         !QStringList{"meters", "icon"}.contains(values.value("trayStyle").toString())) {
@@ -107,7 +118,7 @@ bool DesktopController::validate(QVariantMap &values) {
 void DesktopController::loadSettings(const QString &cliOverride) {
     m_settings = {{"executable", "codexbar"}, {"provider", "codex"}, {"source", "auto"},
         {"refreshSeconds", 300}, {"accountIndex", 0}, {"notifyThreshold", 10}, {"allAccounts", false},
-        {"showIdentity", false}, {"showCosts", true}, {"showStatus", true}, {"notifications", false}, {"showTray", true}, {"refreshOnOpen", false}, {"providerOrder", QStringList{}},
+        {"showIdentity", false}, {"showCosts", true}, {"showStatus", true}, {"notifications", false}, {"showTray", true}, {"refreshOnOpen", false}, {"providerOrder", QStringList{}}, {"hiddenOutputs", QStringList{}},
         {"quotaDisplay", "remaining"}, {"resetDisplay", "countdown"}, {"showPace", true},
         {"showBarDetail", false}, {"showScopedCaps", false}, {"showHeat", false}, {"showBarReset", false}, {"barProviders", 2},
         {"warningColors", true}, {"trayStyle", "meters"}, {"followOmarchyTheme", false}};
@@ -376,7 +387,8 @@ QJsonObject DesktopController::snapshot() {
     }
     return {{"schemaVersion", 1}, {"pid", QCoreApplication::applicationPid()}, {"summary", m_summary}, {"barEntries", m_barEntries},
         {"entries", compact}, {"quotaDisplay", m_settings.value("quotaDisplay").toString()}, {"busy", busy()}, {"stale", stale()}, {"error", m_error},
-        {"updated", updated()}, {"costBusy", costBusy()}, {"costProviders", m_spending.size()}, {"costError", m_costError}};
+        {"updated", updated()}, {"costBusy", costBusy()}, {"costProviders", m_spending.size()}, {"costError", m_costError},
+        {"hiddenOutputs", QJsonArray::fromStringList(m_settings.value("hiddenOutputs").toStringList())}};
 }
 
 bool DesktopController::listen(const QString &socketPath) {

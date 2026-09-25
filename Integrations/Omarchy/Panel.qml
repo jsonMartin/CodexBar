@@ -14,11 +14,27 @@ Panel {
     property string response: ""
     property bool available: false
     readonly property string executable: String(setting("desktopExecutable", "codexbar-linux"))
-    implicitWidth: button.implicitWidth
+    // Omarchy draws one layout on every monitor, so each instance hides itself on the outputs the
+    // backend lists; the settings live in linux.json with the rest of the display preferences.
+    readonly property string outputName: root.QsWindow.window && root.QsWindow.window.screen
+        ? String(root.QsWindow.window.screen.name || "") : ""
+    readonly property var hiddenOutputs: root.available && root.snapshot && root.snapshot.hiddenOutputs
+        ? root.snapshot.hiddenOutputs : []
+    readonly property bool hiddenHere: outputName !== "" && Array.prototype.indexOf.call(hiddenOutputs, outputName) !== -1
+    visible: !hiddenHere
+    implicitWidth: hiddenHere ? 0 : button.implicitWidth
     implicitHeight: button.implicitHeight
     function poll() { if (!reader.running) reader.running = true; }
     function launch(page) { Quickshell.execDetached([executable, "--" + page]); close(); }
     function refresh() { Quickshell.execDetached([executable, "--refresh"]); }
+    function setHidden(name, hidden) {
+        var next = Array.prototype.filter.call(hiddenOutputs, function(item) { return item !== name; });
+        if (hidden) next.push(name);
+        Quickshell.execDetached([executable, "--configure", JSON.stringify({hiddenOutputs: next})]);
+        close();
+        repoll.restart();
+    }
+    Timer { id: repoll; interval: 500; onTriggered: root.poll() }
     // Pace colors come from the theme's own palette. Omarchy's Color exposes only red (urgent), so
     // the widget reads colors.toml itself, falling back to the ANSI slots older themes use.
     property color paceBlue: Color.accent
@@ -373,6 +389,23 @@ Panel {
                         Button { text: "Settings…"; focusable: true; onClicked: root.launch("settings") }
                     }
                     Button { text: "Refresh"; focusable: true; enabled: root.available && !root.snapshot.busy; onClicked: root.refresh() }
+                    Flow {
+                        width: content.width; spacing: Style.space(4)
+                        visible: root.available && root.outputName !== ""
+                        Button {
+                            text: "Hide on " + root.outputName; focusable: true
+                            onClicked: root.setHidden(root.outputName, true)
+                        }
+                        // A monitor that hides the widget has no dropdown of its own, so it is
+                        // brought back from here or from Settings.
+                        Repeater {
+                            model: Array.prototype.filter.call(root.hiddenOutputs, function(name) { return name !== root.outputName; })
+                            Button {
+                                required property var modelData
+                                text: "Show on " + modelData; focusable: true
+                                onClicked: root.setHidden(modelData, false)
+                            }
+                        }
                     }
                 }
             }

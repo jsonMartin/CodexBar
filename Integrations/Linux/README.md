@@ -188,7 +188,7 @@ token-account editing and Mac managed profiles are not implemented here.
 Usage displays used or remaining quota, reset times, pace, credits, status, generic provider
 details, and charts. Unknown values stay unknown. Identity is hidden by default. Display preferences control reset countdowns,
 absolute times, pace visibility, the Omarchy bar's detail, per-model caps, pace coloring,
-reset countdowns in the bar (weekly always, other lanes while over pace), provider count, and low-quota colors. Pace coloring moves the bar's
+reset countdowns in the bar (weekly always, other lanes while over pace), the monitors the Omarchy widget hides on, provider count, and low-quota colors. Pace coloring moves the bar's
 pace figure to the hover tooltip and, in compact mode, tints each provider's
 logo by its hottest lane. The tray can show two quota
 meters for the first displayed provider or a static icon. Unknown meters remain

@@ -423,6 +423,17 @@ else:
         self.assertTrue(self.client('--configure', '{"quotaDisplay":"used","resetDisplay":"both","showPace":false,"trayStyle":"icon","followOmarchyTheme":true}')['ok'])
         self.assertFalse(self.client('--configure', '{"resetDisplay":"nonsense"}', check=False)['ok'])
 
+    def test_hidden_outputs_are_validated_and_published(self):
+        self.assertEqual(self.client('--snapshot')['hiddenOutputs'], [])
+        self.assertTrue(self.client('--configure', '{"hiddenOutputs":["DP-1","DP-1","HDMI-A-1"]}')['ok'])
+        value = self.wait_for(lambda value: value.get('hiddenOutputs') == ['DP-1', 'HDMI-A-1'])
+        self.assertEqual(json.loads((self.root / 'config/codexbar/linux.json').read_text())['hiddenOutputs'], ['DP-1', 'HDMI-A-1'])
+        # Output names reach a shell command only as argv, but stay a closed alphabet anyway.
+        for bad in ['["DP 1"]', '["$(id)"]', '["' + 'x' * 65 + '"]']:
+            self.assertFalse(self.client('--configure', '{"hiddenOutputs":' + bad + '}', check=False)['ok'])
+        self.assertTrue(self.client('--configure', '{"hiddenOutputs":[]}')['ok'])
+        self.wait_for(lambda value: value.get('hiddenOutputs') == [])
+
     def test_windows_and_cost_scan_use_existing_backend(self):
         pid = self.client('--snapshot')['pid']
         self.client('--settings')
